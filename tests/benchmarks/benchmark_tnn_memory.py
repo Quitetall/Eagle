@@ -24,7 +24,7 @@ def find_project_root(marker='.git'):
 
 ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
-from train_ternary import TernaryMobileNetV5
+from train_ternary import TernaryMobileNetV5_Subband
 
 # RP2350 SRAM4: 64KB total, 22KB workspace, 42KB for weights
 SRAM4_TOTAL = 64 * 1024
@@ -32,9 +32,9 @@ WORKSPACE_RESERVE = 22 * 1024
 MODEL_BUDGET = SRAM4_TOTAL - WORKSPACE_RESERVE  # 43,008 bytes
 
 # Encoder layer prefixes (everything that runs on-chip)
-ENCODER_PREFIXES = ('focal1', 'focal2', 'focal3', 'focal4', 'bottleneck')
+ENCODER_PREFIXES = ('premix', 'focal1', 'focal2', 'focal3', 'dw_gate', 'bneck_v', 'bneck_g', 'rotation_A')
 # Decoder layer prefixes (runs on base station)
-DECODER_PREFIXES = ('expand1', 'expand2', 'expand3', 'expand4', 'output')
+DECODER_PREFIXES = ('expand1', 'expand2', 'expand3', 'output')
 
 
 def estimate_bytes(param_name, tensor, ternary_modules):
@@ -59,7 +59,7 @@ def estimate_bytes(param_name, tensor, ternary_modules):
 
 
 def is_encoder_param(name):
-    return any(name.startswith(p) for p in ENCODER_PREFIXES)
+    return any(name.startswith(p) for p in ENCODER_PREFIXES) or name == 'rotation_A'
 
 
 def is_decoder_param(name):
@@ -67,14 +67,13 @@ def is_decoder_param(name):
 
 
 def run():
-    model = TernaryMobileNetV5(in_ch=21, latent_dim=32)
     ckpt_path = os.path.join(ROOT_DIR, 'ai_models/student/student_hardened.ckpt')
     if not os.path.exists(ckpt_path):
         print(f"[SKIP] Student checkpoint not found: {ckpt_path}")
         print("[SKIP] Benchmark TNN Memory requires a trained student_hardened.ckpt.")
         return None
 
-    model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
+    model = TernaryMobileNetV5_Subband.from_checkpoint(ckpt_path, device='cpu')
 
     # Find ternary modules
     ternary_modules = set()
@@ -134,7 +133,7 @@ def run():
     print(f"[*] Total:   {total:,} bytes")
 
     # Header file size
-    header_path = os.path.join(ROOT_DIR, 'firmware', 'focal_net_weights.h')
+    header_path = os.path.join(ROOT_DIR, 'firmware', 'firmware_export', 'focal_net_weights.h')
     if os.path.exists(header_path):
         print(f"[*] focal_net_weights.h on disk: {os.path.getsize(header_path):,} bytes (text)")
 

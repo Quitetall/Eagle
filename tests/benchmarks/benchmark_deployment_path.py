@@ -33,7 +33,7 @@ ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'oracle'))
 
-from train_ternary import TernaryMobileNetV5
+from train_ternary import TernaryMobileNetV5_Subband
 try:
     from train_teacher import FP32OracleAutoEncoder
     HAS_TEACHER_MODULE = True
@@ -70,17 +70,20 @@ def compute_metrics(x, recon):
 
 
 def load_patient_slice(path):
+    """Load a 313-sample interictal L3 subband window from a Q31 NPZ file."""
     with np.load(path) as data:
-        length = data['data'].shape[1]
-        mask = data['seizure_mask']
-        interictal = np.where(mask == 0)[0]
-        start = interictal[0] if len(interictal) >= 2500 else 0
-        start = min(start, length - 2500)
-        max_bound = float(np.iinfo(data['data'].dtype).max)
-        raw = (data['data'][:, start:start + 2500].astype(np.float32) / max_bound) * 1000.0
-        if raw.shape[1] < 2500:
-            raw = np.pad(raw, ((0, 0), (0, 2500 - raw.shape[1])))
-        return raw.reshape(1, 21, 2500)
+        l3 = data['l3']          # [N_windows, 21, 313], float32
+        seizure_mask = data['seizure_mask']
+        n_windows = l3.shape[0]
+        approx_stride = max(1, len(seizure_mask) // n_windows)
+        win_idx = 0
+        for i in range(n_windows):
+            start_s = i * approx_stride
+            end_s = min(start_s + approx_stride, len(seizure_mask))
+            if not np.any(seizure_mask[start_s:end_s]):
+                win_idx = i
+                break
+        return l3[win_idx:win_idx + 1]  # [1, 21, 313]
 
 
 def run():
@@ -95,12 +98,12 @@ def run():
         return None
 
     PATIENTS = [
-        ('chb15', 'ai_models/dataset_sim/q31_events/chb15_01_q31.npz'),
-        ('chb16', 'ai_models/dataset_sim/q31_events/chb16_01_q31.npz'),
-        ('chb17', 'ai_models/dataset_sim/q31_events/chb17a_03_q31.npz'),
-        ('chb18', 'ai_models/dataset_sim/q31_events/chb18_01_q31.npz'),
-        ('chb19', 'ai_models/dataset_sim/q31_events/chb19_01_q31.npz'),
-        ('chb20', 'ai_models/dataset_sim/q31_events/chb20_01_q31.npz'),
+        ('chb15', 'ai_models/dataset_sim/q31_events/chbmit_chb15_01_q31.npz'),
+        ('chb16', 'ai_models/dataset_sim/q31_events/chbmit_chb16_01_q31.npz'),
+        ('chb17', 'ai_models/dataset_sim/q31_events/chbmit_chb17a_03_q31.npz'),
+        ('chb18', 'ai_models/dataset_sim/q31_events/chbmit_chb18_01_q31.npz'),
+        ('chb19', 'ai_models/dataset_sim/q31_events/chbmit_chb19_01_q31.npz'),
+        ('chb20', 'ai_models/dataset_sim/q31_events/chbmit_chb20_01_q31.npz'),
     ]
     missing = [p for _, p in PATIENTS
                if not os.path.exists(os.path.join(ROOT_DIR, p))]
@@ -108,11 +111,10 @@ def run():
         print(f"[SKIP] Missing patient files ({len(missing)}):")
         for p in missing:
             print(f"         {p}")
-        print("[SKIP] Benchmark Deployment Path requires ai_models/dataset_sim/q31_events/*.npz.")
+        print("[SKIP] Benchmark Deployment Path requires ai_models/dataset_sim/q31_events/chbmit_*.npz.")
         return None
 
-    student = TernaryMobileNetV5(in_ch=21, latent_dim=32).to(device).eval()
-    student.load_state_dict(torch.load(s_path, map_location=device))
+    student = TernaryMobileNetV5_Subband.from_checkpoint(s_path, device=device).eval()
 
     # Load teacher (optional — Route B)
     has_teacher = False
@@ -136,9 +138,9 @@ def run():
     else:
         print("[*] Teacher module unavailable — Route B will be skipped.")
 
-    # Check encoder output shape
+    # Check encoder output shape (use 313 samples — L3 subband window length)
     with torch.no_grad():
-        test = torch.randn(1, 21, 100).to(device)
+        test = torch.randn(1, 21, 313).to(device)
         lat = student.encode(test, quantize=True)
         stride = test.shape[2] // lat.shape[2]
         print(f"[*] Student encoder: {list(test.shape)} → {list(lat.shape)} (stride {stride}x)")

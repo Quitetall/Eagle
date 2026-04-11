@@ -4,7 +4,7 @@ LamQuant Gen 6 — Biological Fidelity Benchmark (FIXED)
 ======================================================
 Changes from previous version:
   1. Standalone again — does NOT delegate to clinical_master_harness
-  2. Imports TernaryMobileNetV5 (correct class name)
+  2. Imports TernaryMobileNetV5_Subband (new subband architecture)
   3. Tests student autoencoder reconstruction directly
   4. Uses held-out patients (chb15-chb20) not used in training
 """
@@ -26,31 +26,29 @@ def find_project_root(marker='.git'):
 
 ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
-from train_ternary import TernaryMobileNetV5  # FIX: correct class name
+from train_ternary import TernaryMobileNetV5_Subband
 
 
 def load_genuine_clinical_slice(path):
-    """Load a 2500-sample interictal window from a Q31 NPZ file."""
+    """Load a 313-sample interictal L3 subband window from a Q31 NPZ file."""
     with np.load(path) as data:
-        length = data['data'].shape[1]
-        mask = data['seizure_mask']
+        # l3 shape: [N_windows, 21, 313] — pick first interictal window
+        l3 = data['l3']  # [N, 21, 313]
+        seizure_mask = data['seizure_mask']
+        n_windows = l3.shape[0]
 
-        # Find a pure interictal (non-seizure) window
-        interictal_indices = np.where(mask == 0)[0]
-        if len(interictal_indices) >= 2500:
-            start_idx = interictal_indices[0]
-            start_idx = min(start_idx, length - 2500)
-        else:
-            start_idx = 0
-            print(f"[!] WARNING: No clean 2500-sample window in {os.path.basename(path)}")
+        # Find a window that is fully interictal (seizure_mask covers raw samples;
+        # map window index → raw sample index via stride ~900500/361 ≈ 2494)
+        approx_stride = max(1, len(seizure_mask) // n_windows)
+        win_idx = 0
+        for i in range(n_windows):
+            start_s = i * approx_stride
+            end_s = min(start_s + approx_stride, len(seizure_mask))
+            if not np.any(seizure_mask[start_s:end_s]):
+                win_idx = i
+                break
 
-        max_bound = float(np.iinfo(data['data'].dtype).max)
-        raw = (data['data'][:, start_idx:start_idx + 2500].astype(np.float32) / max_bound) * 1000.0
-
-        if raw.shape[1] < 2500:
-            raw = np.pad(raw, ((0, 0), (0, 2500 - raw.shape[1])))
-
-        return raw.reshape(1, 21, 2500)
+        return l3[win_idx:win_idx + 1]  # [1, 21, 313], already float32
 
 
 def run():
@@ -63,17 +61,16 @@ def run():
         print("[SKIP] Benchmark Biological Fidelity requires a trained student_hardened.ckpt.")
         return None
 
-    student = TernaryMobileNetV5(in_ch=21, latent_dim=32).to(device).eval()
-    student.load_state_dict(torch.load(s_path, map_location=device))
+    student = TernaryMobileNetV5_Subband.from_checkpoint(s_path, device=device).eval()
 
     # Held-out patients (not in training split)
     PATIENTS = [
-        ('chb15', 'ai_models/dataset_sim/q31_events/chb15_01_q31.npz'),
-        ('chb16', 'ai_models/dataset_sim/q31_events/chb16_01_q31.npz'),
-        ('chb17', 'ai_models/dataset_sim/q31_events/chb17a_03_q31.npz'),
-        ('chb18', 'ai_models/dataset_sim/q31_events/chb18_01_q31.npz'),
-        ('chb19', 'ai_models/dataset_sim/q31_events/chb19_01_q31.npz'),
-        ('chb20', 'ai_models/dataset_sim/q31_events/chb20_01_q31.npz'),
+        ('chb15', 'ai_models/dataset_sim/q31_events/chbmit_chb15_01_q31.npz'),
+        ('chb16', 'ai_models/dataset_sim/q31_events/chbmit_chb16_01_q31.npz'),
+        ('chb17', 'ai_models/dataset_sim/q31_events/chbmit_chb17a_03_q31.npz'),
+        ('chb18', 'ai_models/dataset_sim/q31_events/chbmit_chb18_01_q31.npz'),
+        ('chb19', 'ai_models/dataset_sim/q31_events/chbmit_chb19_01_q31.npz'),
+        ('chb20', 'ai_models/dataset_sim/q31_events/chbmit_chb20_01_q31.npz'),
     ]
 
     missing = [p for _, p in PATIENTS
@@ -82,7 +79,7 @@ def run():
         print(f"[SKIP] Missing held-out patient files ({len(missing)}):")
         for p in missing:
             print(f"         {p}")
-        print("[SKIP] Benchmark Biological Fidelity requires ai_models/dataset_sim/q31_events/*.npz.")
+        print("[SKIP] Benchmark Biological Fidelity requires ai_models/dataset_sim/q31_events/chbmit_*.npz.")
         return None
 
     R_FLOOR = 0.83  # Temporary: lowered from 0.85 to see full gauntlet. Target: 0.85+

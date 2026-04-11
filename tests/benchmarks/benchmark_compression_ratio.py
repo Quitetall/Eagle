@@ -36,7 +36,7 @@ def find_project_root(marker='.git'):
 ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'oracle'))
-from train_ternary import TernaryMobileNetV5
+from train_ternary import TernaryMobileNetV5_Subband
 try:
     from train_teacher import FP32OracleAutoEncoder
     HAS_TEACHER_MODULE = True
@@ -126,15 +126,9 @@ def golden_pipeline(student, teacher, x_tensor, device, L=8):
     lat_t = torch.from_numpy(lat_rec).unsqueeze(0).float().to(device)
 
     with torch.no_grad():
-        # Student decoder expects strided latent [B, 32, T/4] directly
-        h = student.expand1(lat_t, quantize=True)
-        h = student.expand2(h, quantize=True)
-        h = student.expand3(h, quantize=True)
-        h = student.expand4(h, quantize=True)
-        decoded = student.output(h)
-        # Trim to input length
         input_T = x_tensor.shape[2]
-        decoded = decoded[:, :, :input_T]
+        # decode() requires target_len for ConvTranspose1d output trimming
+        decoded = student.decode(lat_t, target_len=input_T, quantize=True)
 
     orig = x_tensor[0].cpu().numpy()
     dec_np = decoded[0].cpu().numpy()
@@ -240,17 +234,20 @@ def lightning_pipeline(signal_21ch, T=2500):
 # =====================================================================
 
 def load_patient_slice(path):
+    """Load a 313-sample interictal L3 subband window from a Q31 NPZ file."""
     with np.load(path) as data:
-        length = data['data'].shape[1]
-        mask = data['seizure_mask']
-        interictal = np.where(mask == 0)[0]
-        start = interictal[0] if len(interictal) >= 2500 else 0
-        start = min(start, length - 2500)
-        max_bound = float(np.iinfo(data['data'].dtype).max)
-        raw = (data['data'][:, start:start+2500].astype(np.float32) / max_bound) * 1000.0
-        if raw.shape[1] < 2500:
-            raw = np.pad(raw, ((0,0), (0, 2500-raw.shape[1])))
-        return raw.reshape(1, 21, 2500)
+        l3 = data['l3']          # [N_windows, 21, 313], float32
+        seizure_mask = data['seizure_mask']
+        n_windows = l3.shape[0]
+        approx_stride = max(1, len(seizure_mask) // n_windows)
+        win_idx = 0
+        for i in range(n_windows):
+            start_s = i * approx_stride
+            end_s = min(start_s + approx_stride, len(seizure_mask))
+            if not np.any(seizure_mask[start_s:end_s]):
+                win_idx = i
+                break
+        return l3[win_idx:win_idx + 1]  # [1, 21, 313]
 
 def run():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -271,12 +268,12 @@ def run():
         return None
 
     PATIENTS = [
-        ('chb15', 'ai_models/dataset_sim/q31_events/chb15_01_q31.npz'),
-        ('chb16', 'ai_models/dataset_sim/q31_events/chb16_01_q31.npz'),
-        ('chb17', 'ai_models/dataset_sim/q31_events/chb17a_03_q31.npz'),
-        ('chb18', 'ai_models/dataset_sim/q31_events/chb18_01_q31.npz'),
-        ('chb19', 'ai_models/dataset_sim/q31_events/chb19_01_q31.npz'),
-        ('chb20', 'ai_models/dataset_sim/q31_events/chb20_01_q31.npz'),
+        ('chb15', 'ai_models/dataset_sim/q31_events/chbmit_chb15_01_q31.npz'),
+        ('chb16', 'ai_models/dataset_sim/q31_events/chbmit_chb16_01_q31.npz'),
+        ('chb17', 'ai_models/dataset_sim/q31_events/chbmit_chb17a_03_q31.npz'),
+        ('chb18', 'ai_models/dataset_sim/q31_events/chbmit_chb18_01_q31.npz'),
+        ('chb19', 'ai_models/dataset_sim/q31_events/chbmit_chb19_01_q31.npz'),
+        ('chb20', 'ai_models/dataset_sim/q31_events/chbmit_chb20_01_q31.npz'),
     ]
     missing_patients = [p for _, p in PATIENTS
                         if not os.path.exists(os.path.join(ROOT_DIR, p))]
@@ -284,11 +281,10 @@ def run():
         print(f"[SKIP] Missing patient files ({len(missing_patients)}):")
         for p in missing_patients:
             print(f"         {p}")
-        print("[SKIP] Benchmark Compression Ratio requires ai_models/dataset_sim/q31_events/*.npz.")
+        print("[SKIP] Benchmark Compression Ratio requires ai_models/dataset_sim/q31_events/chbmit_*.npz.")
         return None
 
-    student = TernaryMobileNetV5(in_ch=21, latent_dim=32).to(device).eval()
-    student.load_state_dict(torch.load(s_path, map_location=device))
+    student = TernaryMobileNetV5_Subband.from_checkpoint(s_path, device=device).eval()
 
     teacher = FP32OracleAutoEncoder().to(device).eval()
     sd = {}
@@ -296,13 +292,14 @@ def run():
     for k, v in torch.load(t_dec, map_location=device).items(): sd[f"decoder.{k}"] = v
     teacher.load_state_dict(sd)
 
-    raw_bytes = 21 * 2500 * 2
+    # L3 subband: 313 samples × 21 channels × 4 bytes (float32)
+    raw_bytes = 21 * 313 * 4
     FSQ_LEVELS = [8, 16, 32]
 
     # ======================== GOLDEN ========================
     print(f"\n{'='*80}")
-    print(f" GOLDEN PATH (TNN → FSQ → rANS → Teacher Decode)")
-    print(f" Raw: {raw_bytes} bytes | 21ch × 2500 × int16")
+    print(f" GOLDEN PATH (TNN → FSQ → rANS → Student Decode)")
+    print(f" Raw: {raw_bytes} bytes | 21ch × 313 × float32 (L3 subband)")
     print(f"{'='*80}")
 
     golden_results = {}
@@ -330,7 +327,7 @@ def run():
     # ======================== LIGHTNING ========================
     print(f"\n{'='*80}")
     print(f" LIGHTNING PATH (Toeplitz CS → Lifting → Golomb-Rice → OMP Recovery)")
-    print(f" Note: Reconstructs first 6 of 21 channels")
+    print(f" Note: Reconstructs first 6 of 21 channels (L3 subband, T=313)")
     print(f"{'='*80}")
     print(f"  {'Subject':<10} {'Bytes':>7} {'CR':>7} {'R(6ch)':>8} {'PRD':>8} {'SNR':>7}")
     print(f"  {'-'*52}")
@@ -342,7 +339,7 @@ def run():
         x_np = sig[0]
         x_np = np.clip(x_np - np.mean(x_np, axis=1, keepdims=True), -50, 50)
 
-        b, r, prd, snr = lightning_pipeline(x_np, T=2500)
+        b, r, prd, snr = lightning_pipeline(x_np, T=313)
         cr = raw_bytes / b
         print(f"  {subj:<10} {b:>6}B {cr:>6.1f}x {r:>7.4f} {prd:>7.1f}% {snr:>6.1f}dB")
         lightning_res.append({'subject': subj, 'bytes': b, 'cr': round(cr,1),

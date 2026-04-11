@@ -27,7 +27,8 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models'))
 
-from train_ternary import TernaryMobileNetV5
+from train_ternary import TernaryMobileNetV5_Subband
+from precompute_l3_fast import preprocess_subband_single
 
 # --- Metrics ---
 
@@ -164,7 +165,7 @@ def rans_decode(encoded_bytes, num_symbols, freq, start, total_freq=4096):
 # --- Main E2E Test ---
 
 def load_dataset():
-    """Load held-out Q31 dataset."""
+    """Load held-out Q31 dataset, applying L3 subband preprocessing."""
     data_dir = os.path.join(ROOT_DIR, 'ai_models', 'dataset_sim', 'q31_held_out')
     if not os.path.isdir(data_dir):
         print(f"[SKIP] Dataset directory not found: {data_dir}")
@@ -177,15 +178,19 @@ def load_dataset():
 
     datasets = []
     for fname in files:
-        data = np.load(os.path.join(data_dir, fname))
-        eeg = data['eeg'].astype(np.float32)  # [21, 2500]
-        # Normalize Q31 → float mV
-        eeg = eeg / 2147483647.0 * 1000.0
-        # DC removal per channel
+        npz = np.load(os.path.join(data_dir, fname))
+        if 'l3' in npz:
+            # File already has precomputed L3 subband (first window)
+            eeg = npz['l3'][0] if npz['l3'].ndim == 3 else npz['l3']  # [21, 313]
+        else:
+            # Raw Q31 int32 data — normalize then apply L3 preprocessing
+            raw = npz['data'].astype(np.float32)  # [21, 2500]
+            eeg_mv = raw / 2147483647.0 * 1000.0
+            eeg, _, _ = preprocess_subband_single(eeg_mv)  # [21, 313]
+        # DC removal per channel + silicon shackle
         eeg = eeg - eeg.mean(axis=1, keepdims=True)
-        # Silicon shackle: clamp to ±50 mV
         eeg = np.clip(eeg, -50.0, 50.0)
-        datasets.append((fname, torch.tensor(eeg).unsqueeze(0)))  # [1, 21, 2500]
+        datasets.append((fname, torch.tensor(eeg).unsqueeze(0)))  # [1, 21, 313]
 
     return datasets
 
@@ -202,9 +207,7 @@ def run_golden_path_e2e():
         print(f"[SKIP] Student checkpoint not found: {ckpt_path}")
         return True  # Skip gracefully
 
-    model = TernaryMobileNetV5(in_ch=21, latent_dim=32)
-    model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
-    model.eval()
+    model = TernaryMobileNetV5_Subband.from_checkpoint(ckpt_path, device='cpu').eval()
 
     datasets = load_dataset()
     if not datasets:
@@ -218,11 +221,11 @@ def run_golden_path_e2e():
 
     with torch.no_grad():
         for fname, x in datasets:
-            T = x.shape[2]  # 2500
-            raw_bytes = 21 * T * 4  # 21ch × 2500 × 4 bytes (Q31)
+            T = x.shape[2]  # 313 (L3 subband)
+            raw_bytes = 21 * T * 4  # 21ch × T × 4 bytes (float32 L3)
 
             # 1. Encode
-            latent = model.encode(x, quantize=True)  # [1, 32, T/8]
+            latent = model.encode(x, quantize=True)  # [1, 32, T/4]
             lat_np = latent.numpy().flatten()
 
             # 2. FSQ quantize
@@ -243,8 +246,8 @@ def run_golden_path_e2e():
             lat_tensor = torch.tensor(
                 lat_reconstructed.reshape(latent.shape), dtype=torch.float32)
 
-            # 6. Decode
-            recon = model.decode(lat_tensor)  # [1, 21, T]
+            # 6. Decode (target_len required by new model to trim ConvTranspose1d output)
+            recon = model.decode(lat_tensor, target_len=T)  # [1, 21, T]
 
             # Handle potential length mismatch from stride rounding
             min_T = min(x.shape[2], recon.shape[2])

@@ -3,7 +3,7 @@
 LamQuant Gen 6 — Clinical Master Harness (FIXED)
 ================================================
 Changes from previous version:
-  1. Import TernaryMobileNetV5 (correct class name)
+  1. Import TernaryMobileNetV5_Subband (new subband architecture)
   2. Student is a full autoencoder — reconstruction is student(x), no teacher decoder needed
   3. _align_silicon_gain removed — not needed when student reconstructs standalone
   4. validate_profile defined once, with stress profile morphology integrated
@@ -43,7 +43,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
 
 try:
     from train_teacher import FP32OracleAutoEncoder
-    from train_ternary import TernaryMobileNetV5  # FIX 1: correct class name
+    from train_ternary import TernaryMobileNetV5_Subband
 except ImportError as e:
     print(f"[!] Import failed: {e}")
     print(f"[!] ROOT_DIR resolved to: {ROOT_DIR}")
@@ -138,14 +138,16 @@ class ClinicalMasterHarness:
             print(f"{YELLOW}[SKIP] Clinical harness requires a trained student checkpoint.{RESET}")
             return
 
-        # FIX 1: correct class name
         try:
-            self.student = TernaryMobileNetV5(in_ch=21, latent_dim=32).to(self.device).eval()
+            self.student = TernaryMobileNetV5_Subband.from_checkpoint(s_path, device=self.device).eval()
         except NameError:
             self.skipped = True
-            self.skip_reason = "TernaryMobileNetV5 not importable"
+            self.skip_reason = "TernaryMobileNetV5_Subband not importable"
             print(f"{YELLOW}[SKIP] {self.skip_reason}{RESET}")
             return
+
+        if not self.stdout_mode:
+            print(f"[*] Loaded student weights (STRICT).")
 
         # Load teacher for oracle parity reference (not used in reconstruction path)
         try:
@@ -164,14 +166,6 @@ class ClinicalMasterHarness:
         except Exception as e:
             print(f"{YELLOW}[!] Teacher not loaded (oracle parity will be skipped): {e}{RESET}")
             self.has_teacher = False
-
-        # Load student weights
-        state_dict = torch.load(s_path, map_location=self.device)
-        clean_sd = {k.replace("_orig_mod.", "").replace("module.", ""): v
-                    for k, v in state_dict.items()}
-        self.student.load_state_dict(clean_sd, strict=True)
-        if not self.stdout_mode:
-            print(f"[*] Loaded student weights (STRICT).")
 
     # ---------------------------------------------------------
     # METRICS
@@ -274,29 +268,40 @@ class ClinicalMasterHarness:
                     pass
 
         with np.load(target_file) as data:
-            raw_data = data['data']
+            # l3 shape: [N_windows, 21, 313] — already float32 subband
+            l3 = data['l3']
             seizure_mask = data['seizure_mask']
-            max_bound = float(np.iinfo(raw_data.dtype).max)
+            n_windows = l3.shape[0]
+            approx_stride = max(1, len(seizure_mask) // n_windows)
 
-            # Select the right chunk
+            # Select the right window
             if name == "SEIZURE_BURST" and np.any(seizure_mask):
-                s_idx = np.argmax(seizure_mask > 0)
-                raw_chunk = raw_data[:, s_idx:s_idx + 2500]
+                # Find the first window that overlaps a seizure
+                win_idx = 0
+                for i in range(n_windows):
+                    s = i * approx_stride
+                    e = min(s + approx_stride, len(seizure_mask))
+                    if np.any(seizure_mask[s:e]):
+                        win_idx = i
+                        break
             else:
-                raw_chunk = raw_data[:, :2500]
+                # First interictal window
+                win_idx = 0
+                for i in range(n_windows):
+                    s = i * approx_stride
+                    e = min(s + approx_stride, len(seizure_mask))
+                    if not np.any(seizure_mask[s:e]):
+                        win_idx = i
+                        break
 
-            # Apply stress morphology
+            eeg_float = l3[win_idx].copy()  # [21, 313], float32
+
+            # Apply stress morphology (on already-normalised subband data)
             if name == "POST_ICTAL_SUPPRESSION":
-                raw_chunk = (raw_chunk.astype(np.float64) * 0.05).astype(np.int32)
+                eeg_float = eeg_float * 0.05
             elif name == "ELECTRODE_POP_RAIL":
-                raw_chunk = raw_chunk.astype(np.float64)
-                offset = np.random.uniform(
-                    -max_bound * 1.5, max_bound * 1.5, size=(raw_chunk.shape[0], 1))
-                raw_chunk = np.clip(raw_chunk + offset, -max_bound, max_bound).astype(np.int32)
-
-            eeg_float = (raw_chunk.astype(np.float32) / max_bound) * 1000.0
-            if eeg_float.shape[1] < 2500:
-                eeg_float = np.pad(eeg_float, ((0, 0), (0, 2500 - eeg_float.shape[1])))
+                offset = np.random.uniform(-50.0, 50.0, size=(eeg_float.shape[0], 1))
+                eeg_float = np.clip(eeg_float + offset, -50.0, 50.0)
 
             # Clinical normalization (DC removal + silicon shackle)
             x_ac = eeg_float - np.mean(eeg_float, axis=1, keepdims=True)

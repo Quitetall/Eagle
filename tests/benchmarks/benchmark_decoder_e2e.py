@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models', 'oracle'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models'))
 
-from train_ternary import TernaryMobileNetV5
+from train_ternary import TernaryMobileNetV5_Subband
 
 
 def pearson_r_batch(x, y):
@@ -51,11 +51,12 @@ def benchmark_route_a(model, num_windows=100):
     tracemalloc.start()
     with torch.no_grad():
         for i in range(num_windows):
-            x = torch.clamp(torch.randn(1, 21, 2500) * 20, -50, 50)
+            # Subband model expects [B, 21, 313] (L3 subband input)
+            x = torch.clamp(torch.randn(1, 21, 313) * 20, -50, 50)
 
             t0 = time.perf_counter()
             latent = model.encode(x, quantize=True)
-            recon = model.decode(latent)
+            recon = model.decode(latent, target_len=x.shape[2])
             t1 = time.perf_counter()
 
             latencies.append((t1 - t0) * 1000)  # ms
@@ -106,10 +107,11 @@ def benchmark_route_b(student_model, num_windows=100):
     tracemalloc.start()
     with torch.no_grad():
         for i in range(num_windows):
-            x = torch.clamp(torch.randn(1, 21, 2500) * 20, -50, 50)
+            # Subband model expects [B, 21, 313] (L3 subband input)
+            x = torch.clamp(torch.randn(1, 21, 313) * 20, -50, 50)
 
             t0 = time.perf_counter()
-            latent = student_model.encode(x, quantize=True)  # [1, 32, T/8]
+            latent = student_model.encode(x, quantize=True)  # [1, 32, T/4]
             # Upsample to full length for teacher decoder
             latent_up = torch.nn.functional.interpolate(
                 latent, size=x.shape[2], mode='linear', align_corners=False)
@@ -150,8 +152,7 @@ def main():
         print(f"[SKIP] Student checkpoint not found: {ckpt_path}")
         return 0
 
-    model = TernaryMobileNetV5(in_ch=21, latent_dim=32)
-    model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
+    model = TernaryMobileNetV5_Subband.from_checkpoint(ckpt_path, device='cpu')
 
     route_a = benchmark_route_a(model)
     route_b = benchmark_route_b(model)
