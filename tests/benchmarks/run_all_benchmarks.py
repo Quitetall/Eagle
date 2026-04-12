@@ -507,6 +507,32 @@ def main():
         traceback.print_exc()
         render_result("Cayley Rotation (CRASHED)", "FAIL")
 
+    # 22. FSQ VALIDATION
+    render_banner("AUDIT 22: FSQ VALIDATION (D15)")
+    try:
+        import benchmark_fsq_validation
+        result = benchmark_fsq_validation.run()
+        if result is None:
+            render_result("FSQ Validation (missing deps)", "SKIP")
+        else:
+            our_r = result['our_fsq_r']
+            lr_r = result['lucidrains_fsq_r']
+            delta = result['r_delta']
+            if result.get('passed', False):
+                render_result(f"Ours R={our_r:.4f}, lucidrains R={lr_r:.4f}, delta={delta:.4f}")
+            else:
+                render_result(f"Ours R={our_r:.4f}, lucidrains R={lr_r:.4f}, delta={delta:.4f}", "FAIL")
+    except SystemExit:
+        render_result("FSQ Validation", "FAIL")
+    except ImportError as e:
+        print(f"[!] FSQ validation import failed: {e}")
+        render_result("FSQ Validation (import failed)", "SKIP")
+    except Exception as e:
+        print(f"[!] FSQ validation error: {e}")
+        import traceback
+        traceback.print_exc()
+        render_result("FSQ Validation (CRASHED)", "FAIL")
+
     print("\n" + "*" * 80)
     print(" GAUNTLET COMPLETE ".center(80))
     print("*" * 80 + "\n")

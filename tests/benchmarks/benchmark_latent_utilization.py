@@ -129,24 +129,26 @@ def run(checkpoint_path=None):
     print(f"    Groups    : {N_GROUPS} x {DIMS_PER_GROUP} dims")
     print()
 
-    # Collect all latent FSQ symbols: list of [32, 79] symbol arrays
-    all_symbols = []  # each entry is [32, 79] uint16
+    # Collect all latent FSQ symbols AND raw continuous latents
+    all_symbols = []   # each entry is [32, 79] uint16
+    all_latents = []   # each entry is [32, 79] float32 (for kurtosis)
 
     for patient, path in sorted(available.items()):
         windows = load_l3_windows(path, max_windows=20)
         x = torch.from_numpy(windows).float().to(device)
 
         with torch.no_grad():
-            # Encode full batch at once
             latent = model.encode(x, quantize=True)  # [n, 32, 79]
 
         lat_np = latent.cpu().numpy()  # [n, 32, 79]
         for wi in range(lat_np.shape[0]):
-            syms, _, _ = fsq_encode(lat_np[wi], FSQ_L)  # [32, 79] uint16
+            syms, _, _ = fsq_encode(lat_np[wi], FSQ_L)
             all_symbols.append(syms)
+            all_latents.append(lat_np[wi])
 
     # Stack: [total_windows, 32, 79]
     all_symbols = np.stack(all_symbols, axis=0)
+    all_latents_np = np.stack(all_latents, axis=0)  # [total_windows, 32, 79]
     total_windows, n_latent_dims, n_timesteps = all_symbols.shape
     assert n_latent_dims == 32, f"Expected 32 latent dims, got {n_latent_dims}"
 
@@ -158,16 +160,24 @@ def run(checkpoint_path=None):
     group_utilizations = []
     group_symbols_flat = []  # [N_GROUPS, total_windows * n_timesteps * DIMS_PER_GROUP]
 
+    from scipy.stats import kurtosis as scipy_kurtosis
+
+    group_kurtosis = []  # per-group excess kurtosis (0=Gaussian, >0=peaked, <0=flat)
+
     for g in range(N_GROUPS):
         dim_start = g * DIMS_PER_GROUP
         dim_end = dim_start + DIMS_PER_GROUP
-        # all_symbols[:, dim_start:dim_end, :] shape: [total_windows, 4, 79]
-        syms_group = all_symbols[:, dim_start:dim_end, :]  # [W, 4, 79]
+        # FSQ symbols
+        syms_group = all_symbols[:, dim_start:dim_end, :]
         symbols_flat = syms_group.flatten().astype(np.int32)
         n_unique = len(np.unique(symbols_flat))
         utilization = n_unique / FSQ_L * 100.0
         group_utilizations.append(utilization)
         group_symbols_flat.append(symbols_flat)
+        # Kurtosis on raw continuous latent (before FSQ)
+        lat_group = all_latents_np[:, dim_start:dim_end, :].flatten()
+        kurt = float(scipy_kurtosis(lat_group, fisher=True))  # excess kurtosis (Gaussian=0)
+        group_kurtosis.append(kurt)
 
     # Mutual information between adjacent groups (g, g+1)
     # Use only the timestep dimension for MI (consistent length)
@@ -197,7 +207,7 @@ def run(checkpoint_path=None):
     print(f" FSQ L={FSQ_L}, 32 dims grouped into {N_GROUPS} groups of {DIMS_PER_GROUP}")
     print("=" * 72)
     print()
-    print(f"  {'Group':<8} {'Dims':<12} {'N Unique':>9} {'Util %':>8}   {'MI→next (bits)':>16}")
+    print(f"  {'Group':<8} {'Dims':<12} {'N Unique':>9} {'Util %':>8} {'Kurtosis':>9}   {'MI→next':>10}")
     print(f"  {'-'*60}")
 
     for g in range(N_GROUPS):
@@ -206,13 +216,27 @@ def run(checkpoint_path=None):
         dim_str = f"{dim_start}-{dim_end}"
         n_unique = int(round(group_utilizations[g] / 100.0 * FSQ_L))
         util = group_utilizations[g]
-        mi_str = f"{group_mi[g]:.3f}" if g < len(group_mi) else "   ---"
+        kurt = group_kurtosis[g]
+        mi_str = f"{group_mi[g]:.3f}" if g < len(group_mi) else "---"
+        kurt_tag = "Laplacian" if kurt > 3 else "peaked" if kurt > 1 else "Gaussian" if kurt > -0.5 else "flat"
         warn = " <-- LOW" if util < 25.0 else ""
-        print(f"  {'G'+str(g):<8} {dim_str:<12} {n_unique:>9} {util:>7.1f}%   {mi_str:>16}{warn}")
+        print(f"  {'G'+str(g):<8} {dim_str:<12} {n_unique:>9} {util:>7.1f}% {kurt:>8.2f}   {mi_str:>10}  {kurt_tag}{warn}")
 
     print()
+    mean_kurtosis = float(np.mean(group_kurtosis))
+    max_kurtosis = float(np.max(group_kurtosis))
+    n_laplacian = sum(1 for k in group_kurtosis if k > 3)
+
     print(f"  Mean utilization : {mean_utilization:.1f}%  (threshold > 60%)")
     print(f"  Min  utilization : {min_utilization:.1f}%  (threshold > 25%)")
+    print(f"  Mean kurtosis    : {mean_kurtosis:.2f}  (>3 = Laplacian, good for residual FSQ)")
+    print(f"  Max kurtosis     : {max_kurtosis:.2f}  ({n_laplacian}/{N_GROUPS} groups Laplacian)")
+    if n_laplacian >= 4:
+        print(f"  Residual FSQ     : RECOMMENDED — {n_laplacian} groups have Laplacian latents")
+    elif n_laplacian >= 2:
+        print(f"  Residual FSQ     : WORTH TESTING — {n_laplacian} groups have Laplacian latents")
+    else:
+        print(f"  Residual FSQ     : NOT RECOMMENDED — latents too flat/Gaussian")
     print(f"  Dead codes total : {dead_code_total}  (sum of unused bins per group)")
     print(f"  Mean MI adjacent : {np.mean(group_mi):.3f} bits")
     print()
@@ -240,6 +264,10 @@ def run(checkpoint_path=None):
         'dead_code_total': dead_code_total,
         'group_utilizations': group_utilizations,
         'group_mi': group_mi,
+        'group_kurtosis': group_kurtosis,
+        'mean_kurtosis': mean_kurtosis,
+        'max_kurtosis': max_kurtosis,
+        'n_laplacian_groups': n_laplacian,
         'total_windows': total_windows,
     }
 

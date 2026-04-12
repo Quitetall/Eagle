@@ -47,10 +47,17 @@ def unpack_header_ternary(packed_bytes, shape):
 
 
 def parse_clinical_header(path):
+    """Parse the firmware C header, handling both Q31 (int32_t) and Q15 (int16_t) formats.
+
+    The export_firmware.py now emits Q15 alphas, Q15 biases, Q7 norm weights,
+    and Q15 rotation matrices.  Old headers may still use Q31.  We detect both
+    patterns and normalise everything to float32.
+    """
     with open(path, 'r') as f:
         content = f.read()
 
     alphas = {}
+    # Q31 alphas: const int32_t {name}_alphas_q31[...] = {...};
     for m in re.finditer(
         r"const int32_t\s+([a-zA-Z0-9_]+)_alphas_q31\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
         content, re.DOTALL
@@ -59,6 +66,73 @@ def parse_clinical_header(path):
         vals = re.findall(r"-?[0-9][0-9]*", m.group(2))
         alphas[name] = np.array([int(v) for v in vals], dtype=np.int32).astype(np.float32) / 2147483647.0
 
+    # Q15 alphas: const int16_t {name}_alphas_q15[...] = {...};
+    for m in re.finditer(
+        r"const int16_t\s+([a-zA-Z0-9_]+)_alphas_q15\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
+        content, re.DOTALL
+    ):
+        name = m.group(1)
+        vals = re.findall(r"-?[0-9][0-9]*", m.group(2))
+        alphas[name] = np.array([int(v) for v in vals], dtype=np.int16).astype(np.float32) / 32767.0
+
+    # Rotation matrix — Q31 (legacy): const int32_t rotation_Q_q31[...] = {...};
+    rotation = None
+    m_rot31 = re.search(
+        r"const int32_t\s+rotation_Q_q31\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
+        content, re.DOTALL
+    )
+    if m_rot31:
+        vals = re.findall(r"-?[0-9][0-9]*", m_rot31.group(1))
+        rotation = np.array([int(v) for v in vals], dtype=np.int32).astype(np.float32) / 2147483647.0
+
+    # Rotation matrix — Q15 (new): const int16_t rotation_Q_q15[...] = {...};
+    m_rot15 = re.search(
+        r"const int16_t\s+rotation_Q_q15\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
+        content, re.DOTALL
+    )
+    if m_rot15:
+        vals = re.findall(r"-?[0-9][0-9]*", m_rot15.group(1))
+        rotation = np.array([int(v) for v in vals], dtype=np.int16).astype(np.float32) / 32767.0
+
+    # Norm biases — Q31 (legacy): const int32_t {name}_bias_q31[...] = {...};
+    norm_biases = {}
+    for m in re.finditer(
+        r"const int32_t\s+([a-zA-Z0-9_]+)_bias_q31\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
+        content, re.DOTALL
+    ):
+        name = m.group(1)
+        vals = re.findall(r"-?[0-9][0-9]*", m.group(2))
+        norm_biases[name] = np.array([int(v) for v in vals], dtype=np.int32).astype(np.float32) / 2147483647.0
+
+    # Norm biases — Q15 (new): const int16_t {name}_bias_q15[...] = {...};
+    for m in re.finditer(
+        r"const int16_t\s+([a-zA-Z0-9_]+)_bias_q15\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
+        content, re.DOTALL
+    ):
+        name = m.group(1)
+        vals = re.findall(r"-?[0-9][0-9]*", m.group(2))
+        norm_biases[name] = np.array([int(v) for v in vals], dtype=np.int16).astype(np.float32) / 32767.0
+
+    # Norm weights — Q31 (legacy): const int32_t {name}_weight_q31[...] = {...};
+    norm_weights = {}
+    for m in re.finditer(
+        r"const int32_t\s+([a-zA-Z0-9_]+)_weight_q31\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
+        content, re.DOTALL
+    ):
+        name = m.group(1)
+        vals = re.findall(r"-?[0-9][0-9]*", m.group(2))
+        norm_weights[name] = np.array([int(v) for v in vals], dtype=np.int32).astype(np.float32) / 2147483647.0
+
+    # Norm weights — Q7 (new): const int8_t {name}_weight_q7[...] = {...};
+    for m in re.finditer(
+        r"const int8_t\s+([a-zA-Z0-9_]+)_weight_q7\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
+        content, re.DOTALL
+    ):
+        name = m.group(1)
+        vals = re.findall(r"-?[0-9][0-9]*", m.group(2))
+        norm_weights[name] = np.array([int(v) for v in vals], dtype=np.int8).astype(np.float32) / 127.0
+
+    # Packed ternary weights (unchanged — always uint8_t)
     weights = {}
     for m in re.finditer(
         r"const uint8_t\s+([a-zA-Z0-9_]+)_weights\[.*?\]\s*.*?\s*=\s*\{(.*?)\};",
@@ -68,11 +142,11 @@ def parse_clinical_header(path):
         hex_vals = re.findall(r"0x[0-9a-fA-F]+", m.group(2))
         weights[name] = np.array([int(h, 16) for h in hex_vals], dtype=np.uint8)
 
-    return alphas, weights
+    return alphas, weights, rotation, norm_biases, norm_weights
 
 
 def c_conv1d(x_t, unpacked_w, alphas, conv_module):
-    """Simulate a ternary conv1d using C-extracted weights and Q31 alphas."""
+    """Simulate a ternary conv1d using C-extracted weights and float32 alphas."""
     w = torch.from_numpy(unpacked_w).float()
     for oc in range(w.shape[0]):
         w[oc] *= alphas[oc]
@@ -130,7 +204,7 @@ def run():
         return None
     model.eval()
 
-    c_alphas, c_packed = parse_clinical_header(header_path)
+    c_alphas, c_packed, c_rotation, c_norm_biases, c_norm_weights = parse_clinical_header(header_path)
 
     # All encoder layers for new Subband architecture:
     #   premix, focal1_conv (standalone), focal2 (block), focal3 (block),
