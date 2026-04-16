@@ -26,10 +26,10 @@ ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
 from train_ternary import TernaryMobileNetV5_Subband
 
-# RP2350: 64KB dedicated bank for TNN encoder.
-# Path B: metadata at INT16 (Q15) — workspace lives in separate SRAM bank.
-# Full 64KB available for encoder weights + metadata.
-MODEL_BUDGET = 64 * 1024  # 65,536 bytes
+# RP2350: V1 w=128 encoder spans SRAM4 (64 KB) + partial SRAM5.
+# Total weight budget: 75 KB (ternary + Q31 + INT8 + CDF + Cayley).
+# Activations are separate (78 KB in SRAM6-7).
+MODEL_BUDGET = 80 * 1024  # 81,920 bytes (75 KB + 5 KB margin)
 
 # Encoder layer prefixes (everything that runs on-chip)
 ENCODER_PREFIXES = ('premix', 'focal1', 'focal2', 'focal3', 'dw_gate', 'bneck_v', 'bneck_g', 'rotation_A')
