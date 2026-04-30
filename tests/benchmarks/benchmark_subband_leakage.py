@@ -47,7 +47,7 @@ def find_project_root(marker='.git'):
 
 ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
-from train_ternary import TernaryMobileNetV5_Subband
+from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
 
 
 # Le Gall 5/3 at 3 lifting levels: fs=250, L3 effective band = 0 to fs/2^4 = 15.625 Hz

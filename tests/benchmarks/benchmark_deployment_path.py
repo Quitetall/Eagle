@@ -33,7 +33,7 @@ ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'oracle'))
 
-from train_ternary import TernaryMobileNetV5_Subband
+from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
 try:
     from train_teacher import FP32OracleAutoEncoder
     HAS_TEACHER_MODULE = True

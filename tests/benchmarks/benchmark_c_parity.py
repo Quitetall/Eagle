@@ -32,7 +32,8 @@ def find_project_root(marker='.git'):
 
 ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
-from train_ternary import TernaryMobileNetV5_Subband, TernaryConv1d
+from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
+from lamquant_codec.models.blocks import TernaryConv1d
 
 TERNARY_LUT = np.array([0, 1, -1, 0], dtype=np.int32)
 

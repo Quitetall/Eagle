@@ -44,7 +44,7 @@ def find_project_root(marker='.git'):
 
 ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
-from train_ternary import TernaryMobileNetV5_Subband
+from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
 
 # RP2350 Hazard3 throughput constants
 MACS_PER_CYCLE_IDEAL = 16 / 5    # 16 MACs in 5 cycles (XNOR+cpop pipeline)

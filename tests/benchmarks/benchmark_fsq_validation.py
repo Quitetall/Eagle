@@ -42,7 +42,7 @@ ROOT_DIR = find_project_root()
 sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from train_ternary import TernaryMobileNetV5_Subband
+from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
 from benchmark_compression_ratio import fsq_encode, fsq_decode
 
 PATIENTS = {

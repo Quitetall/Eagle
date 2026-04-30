@@ -43,7 +43,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'ai_models', 'student'))
 
 try:
     from train_teacher import FP32OracleAutoEncoder
-    from train_ternary import TernaryMobileNetV5_Subband
+    from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
 except ImportError as e:
     print(f"[!] Import failed: {e}")
     print(f"[!] ROOT_DIR resolved to: {ROOT_DIR}")

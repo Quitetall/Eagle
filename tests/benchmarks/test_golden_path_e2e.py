@@ -27,7 +27,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models'))
 
-from train_ternary import TernaryMobileNetV5_Subband
+from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
 from precompute_l3_fast import preprocess_subband_single
 
 # --- Metrics ---

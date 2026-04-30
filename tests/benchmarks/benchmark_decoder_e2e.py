@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models', 'student'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models', 'oracle'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'ai_models'))
 
-from train_ternary import TernaryMobileNetV5_Subband
+from lamquant_codec.models.encoder import TernaryMobileNetV5_Subband
 
 
 def pearson_r_batch(x, y):
