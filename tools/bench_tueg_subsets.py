@@ -74,7 +74,9 @@ def group_key(edf: Path, tree: Path, mode: str) -> str:
 
 
 def encode_one(edf: Path, scratch: Path) -> int:
-    out_path = scratch / (edf.stem + ".lml")
+    import os
+    # PID + uniquified stem to avoid worker collisions on shared scratch.
+    out_path = scratch / f"{os.getpid()}_{edf.stem}.lml"
     subprocess.check_call(
         [str(LML_BIN), "encode", str(edf), "-o", str(out_path),
          "--bare-lml", "--i-understand-data-loss"],
@@ -85,7 +87,22 @@ def encode_one(edf: Path, scratch: Path) -> int:
     return size
 
 
+def _worker(args: tuple) -> tuple:
+    """Pool worker: returns (key, in_sz, out_sz, ok, err)."""
+    edf, tree, mode, scratch_str = args
+    scratch = Path(scratch_str)
+    key = group_key(edf, tree, mode)
+    try:
+        in_sz = edf.stat().st_size
+        out_sz = encode_one(edf, scratch)
+        return (key, in_sz, out_sz, True, None)
+    except subprocess.CalledProcessError as e:
+        return (key, 0, 0, False, str(e))
+
+
 def main() -> int:
+    import multiprocessing as mp
+    import os
     ap = argparse.ArgumentParser()
     ap.add_argument("--tree", type=Path, required=True,
                     help="Root directory of the EDF tree to bench.")
@@ -93,6 +110,9 @@ def main() -> int:
                     default="montage", help="Aggregation dimension.")
     ap.add_argument("--limit", type=int, default=0,
                     help="Stop after N files (smoke test).")
+    ap.add_argument("--jobs", type=int,
+                    default=max(1, os.cpu_count() - 1),
+                    help="Parallel workers (default = cpu_count-1).")
     args = ap.parse_args()
 
     if not args.tree.is_dir():
@@ -104,8 +124,8 @@ def main() -> int:
                   if ".seizures" not in p.name)
     if args.limit > 0:
         edfs = edfs[: args.limit]
-    print(f"[bench_tueg] {len(edfs)} EDFs under {args.tree}",
-          file=sys.stderr)
+    print(f"[bench_tueg] {len(edfs)} EDFs under {args.tree} "
+          f"(jobs={args.jobs})", file=sys.stderr)
 
     per_group: dict[str, dict[str, int]] = defaultdict(
         lambda: {"files": 0, "input_bytes": 0, "output_bytes": 0}
@@ -113,23 +133,29 @@ def main() -> int:
     failures = 0
     t0 = time.time()
     with tempfile.TemporaryDirectory(prefix="bench_tueg_") as scratch_str:
-        scratch = Path(scratch_str)
-        for i, edf in enumerate(edfs):
-            key = group_key(edf, args.tree, args.group_by)
-            try:
-                in_sz = edf.stat().st_size
-                out_sz = encode_one(edf, scratch)
-                bucket = per_group[key]
-                bucket["files"] += 1
-                bucket["input_bytes"] += in_sz
-                bucket["output_bytes"] += out_sz
-            except subprocess.CalledProcessError as e:
-                failures += 1
-                print(f"[bench_tueg] FAIL {edf.name}: {e}", file=sys.stderr)
-            if (i + 1) % 200 == 0:
-                el = time.time() - t0
-                print(f"[bench_tueg] {i+1}/{len(edfs)} ({el:.0f}s, fail={failures})",
-                      file=sys.stderr)
+        # Each worker uses a unique subdir within scratch to avoid name clashes.
+        worker_args = [
+            (edf, args.tree, args.group_by, scratch_str)
+            for edf in edfs
+        ]
+        with mp.Pool(processes=args.jobs) as pool:
+            for i, (key, in_sz, out_sz, ok, err) in enumerate(
+                pool.imap_unordered(_worker, worker_args, chunksize=8)
+            ):
+                if ok:
+                    bucket = per_group[key]
+                    bucket["files"] += 1
+                    bucket["input_bytes"] += in_sz
+                    bucket["output_bytes"] += out_sz
+                else:
+                    failures += 1
+                    print(f"[bench_tueg] FAIL: {err}", file=sys.stderr)
+                if (i + 1) % 500 == 0:
+                    el = time.time() - t0
+                    rate = (i + 1) / el if el > 0 else 0
+                    print(f"[bench_tueg] {i+1}/{len(edfs)} "
+                          f"({el:.0f}s, {rate:.1f}/s, fail={failures})",
+                          file=sys.stderr)
 
     summary = {
         "tree": str(args.tree),
