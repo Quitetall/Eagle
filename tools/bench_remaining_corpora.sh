@@ -63,9 +63,13 @@ for corpus in "${CORPORA[@]}"; do
   if python3 "$REPO_ROOT/tools/bench_tueg_subsets.py" \
        --tree "$tree" --group-by montage 2>&1 | tail -5; then
     if [[ -f "$out_default" ]]; then
-      mv "$out_default" "$out_renamed"
-      log "✓ $corpus → $(basename "$out_renamed")"
-      DONE=$((DONE + 1))
+      if mv "$out_default" "$out_renamed"; then
+        log "✓ $corpus → $(basename "$out_renamed")"
+        DONE=$((DONE + 1))
+      else
+        log "✗ $corpus — mv $out_default → $out_renamed failed"
+        FAILED=$((FAILED + 1))
+      fi
     else
       log "✗ $corpus — bench produced no JSON"
       FAILED=$((FAILED + 1))
