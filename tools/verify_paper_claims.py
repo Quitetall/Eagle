@@ -83,40 +83,34 @@ def main() -> int:
           approx_eq(gz["wall_seconds"], 271, 0.02),
           f"json={gz['wall_seconds']:.0f}s")
 
-    # ---- TUEG per-subset ----
+    # ---- TUEG v2.0.2 per-subset (headline) ----
     tueg = load(OUT / "tueg_subset_breakdown_montage.json")
-    check("TUEG files=69,674",
-          tueg["files_total"] == 69674,
+    assert "v2.0.2" in tueg["tree"], (
+        f"expected v2.0.2 tree in JSON; got: {tueg['tree']}")
+    check("TUEG v2.0.2 files=70,831 (matches AAREADME)",
+          tueg["files_total"] == 70831,
           f"json={tueg['files_total']}")
-    check("TUEG abstract says 69,730 — MISMATCH",
-          False,
-          f"abstract=69,730; measured=69,674; diff=56 files")
     tueg_in = sum(g["input_bytes"] for g in tueg["groups"].values())
     tueg_out = sum(g["output_bytes"] for g in tueg["groups"].values())
     tueg_cr = tueg_in / tueg_out
-    check("TUEG sum raw = 1,760,072,545,212 B",
-          tueg_in == 1760072545212,
+    check("TUEG v2.0.2 sum raw = 1,756,355,590,458 B",
+          tueg_in == 1756355590458,
           f"json sum={tueg_in}")
-    check("TUEG sum compressed = 769,676,416,643 B",
-          tueg_out == 769676416643,
+    check("TUEG v2.0.2 sum compressed = 768,043,519,030 B",
+          tueg_out == 768043519030,
           f"json sum={tueg_out}")
-    check("TUEG CR = 2.287:1",
+    check("TUEG v2.0.2 CR = 2.287:1",
           approx_eq(tueg_cr, 2.287, 0.001),
-          f"calc={tueg_cr:.4f}")
-    check("TUEG 1.76 TB (decimal) headline",
+          f"calc={tueg_cr:.5f}")
+    check("TUEG v2.0.2 1.76 TB (decimal) headline",
           approx_eq(tueg_in / 1e12, 1.76, 0.005),
           f"calc={tueg_in / 1e12:.4f} TB")
-    check("TUEG abstract 1,760,232,756,956 B — MISMATCH",
-          False,
-          f"abstract=1,760,232,756,956; measured={tueg_in}; "
-          f"diff={1760232756956 - tueg_in} B "
-          f"(extra in abstract = old/56-file count diff)")
 
-    # Per-montage
+    # Per-montage (v2.0.2)
     for grp, gb_claim_in, gb_claim_out, cr_claim in [
-        ("01_tcp_ar", 1376.72, 604.73, 2.277),
+        ("01_tcp_ar", 1373.05, 603.11, 2.277),
         ("02_tcp_le", 249.38, 109.64, 2.274),
-        ("03_tcp_ar_a", 133.75, 55.21, 2.423),
+        ("03_tcp_ar_a", 133.70, 55.19, 2.422),
         ("04_tcp_le_a", 0.2173, 0.0937, 2.318),
     ]:
         g = tueg["groups"][grp]
@@ -169,19 +163,18 @@ def main() -> int:
           approx_eq(a["cr_diff_ceiling"], 2.090, 0.001),
           f"json={a['cr_diff_ceiling']:.4f}")
 
-    # ---- Physical claims (§I) ----
-    # 32ch × 250Hz × 16-bit → 3.84 Mbps?
-    # 32 * 250 * 16 = 128,000 bps. NOT 3.84 Mbps.
-    # 3.84 Mbps would be 32 * 7500 * 16 = 3.84 Mbps or
-    # 32 * 250 * 16 * (something) = 3,840,000
-    # Actually 32 * 250 * 16 = 128_000 = 128 Kbps, not 3.84 Mbps.
-    bps = 32 * 250 * 16
-    check("§I: 32ch×250Hz×16b = 3.84 Mbps — MISMATCH",
-          approx_eq(bps / 1e6, 3.84, 0.01),
-          f"calc={bps / 1e6} Mbps (32×250×16); paper=3.84 Mbps")
-
-    # 16kSPS × 24-bit × ?ch → 12 Mbps?
-    # If 32 channels: 32 * 16000 * 24 = 12,288,000 = 12.29 Mbps ✓
+    # ---- Physical claims (§I) — current paper config ----
+    # 32 ch × 1024 Hz × 24-bit = 786,432 bps ≈ 786 kbps (TUEG max)
+    bps_ambulatory = 32 * 1024 * 24
+    check("§I: 32ch×1024Hz×24b ≈ 786 kbps",
+          approx_eq(bps_ambulatory / 1e3, 786, 0.001),
+          f"calc={bps_ambulatory / 1e3:.0f} kbps")
+    # 256 ch × 1 kSPS × 24-bit ≈ 6.3 Mbps (high-density)
+    bps_highdens = 256 * 1024 * 24
+    check("§I: 256ch×1kSPS×24b ≈ 6.3 Mbps",
+          approx_eq(bps_highdens / 1e6, 6.3, 0.01),
+          f"calc={bps_highdens / 1e6:.2f} Mbps")
+    # 32 ch × 16 kSPS × 24-bit ≈ 12 Mbps (intracranial)
     bps_clinical = 32 * 16000 * 24
     check("§I: 32ch×16kSPS×24b ≈ 12 Mbps",
           approx_eq(bps_clinical / 1e6, 12, 0.05),
