@@ -1,6 +1,6 @@
 //! Real LamQuant-Lossless codec adapter.
 //!
-//! Where [`crate::adapter`] ships the always-available reference codecs
+//! Where [`lqs::adapter`] ships the always-available reference codecs
 //! (`store`, `gzip`, optional `zstd`), this module wires the **actual
 //! production lossless codec** — the `lml` CLI from the sibling
 //! LamQuant-Lossless workspace — behind the same [`Codec`] interface so
@@ -55,7 +55,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::adapter::Codec;
+use lqs::adapter::Codec;
 
 /// Default location of the prebuilt sibling `lml` binary.
 const DEFAULT_LML_BIN: &str = "/tmp/lamquant-verify/LamQuant-Lossless/target/debug/lml";
@@ -200,7 +200,7 @@ fn edf_field(out: &mut Vec<u8>, value: &str, width: usize) -> Result<(), ()> {
 /// chosen so the stored rate matches `fs`). Returns `None` when the
 /// signal cannot be expressed as EDF digital samples: non-i16 values,
 /// ragged channels, or an empty / zero-length signal (see the module
-/// docs). The layout mirrors `crate::edf::read_edf`'s parser exactly.
+/// docs). The layout mirrors `lqs::edf::read_edf`'s parser exactly.
 pub fn write_edf_bytes(signal: &[Vec<i64>], fs: f64) -> Option<Vec<u8>> {
     let ns = signal.len();
     if ns == 0 {
@@ -470,7 +470,7 @@ impl Codec for LamQuantLossless {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness;
+    use lqs::harness;
 
     /// A known multi-channel i64 signal that fits the EDF digital domain
     /// (every value in the i16 range) and has equal-length channels, so it

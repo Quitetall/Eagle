@@ -19,4 +19,7 @@
 # running the benches against a real EEG corpus).
 [workspace]
 resolver = "2"
-members = ["lqs"]
+# `eagle` consumes the vendor-neutral LQS standard (github.com/Quitetall/LQS),
+# pulled via a sibling-clone path dep (see eagle/Cargo.toml). Clone LQS next
+# to this repo. The old in-repo `lqs/` crate was carved out to its own repo.
+members = ["eagle"]

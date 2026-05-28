@@ -1,0 +1,23 @@
+[package]
+name = "eagle"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Eagle — LamQuant's benchmarking tool. Uses the LQS standard to grade LamQuant codecs against EEG corpora."
+repository = "https://github.com/Quitetall/Eagle"
+
+[lib]
+name = "eagle"
+path = "src/lib.rs"
+
+[[bin]]
+name = "eagle"
+path = "src/bin/eagle.rs"
+
+[dependencies]
+# The vendor-neutral LQS standard. Sibling-clone path for local dev;
+# switch to a git/crates.io version once Quitetall/LQS is published.
+#   parent/
+#     LQS/      (github.com/Quitetall/LQS)
+#     Eagle/    (this repo)
+lqs = { path = "../../LQS" }

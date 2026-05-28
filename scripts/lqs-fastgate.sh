@@ -27,9 +27,15 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 # Per the LQS gate contract: operate from the crate dir. `lqs` is a member
-# of the repo-root workspace, so cargo walks up to the root Cargo.lock /
-# target automatically — the build dir is shared with CI's cache.
-cd "${REPO_ROOT}/lqs"
+# Eagle's `eagle` crate consumes the vendor-neutral LQS standard via a
+# sibling-clone path dep (eagle/Cargo.toml: lqs = { path = "../../LQS" }).
+# Requires github.com/Quitetall/LQS checked out next to this repo.
+cd "${REPO_ROOT}"
+
+if [ ! -d "${REPO_ROOT}/../LQS" ]; then
+  echo "lqs-fastgate: WARN — sibling ../LQS not found. Clone Quitetall/LQS"
+  echo "             next to this repo so the eagle->lqs path dep resolves."
+fi
 
 start="$(date +%s)"
 
@@ -40,11 +46,11 @@ fail() {
   exit 1
 }
 
-echo "lqs-fastgate: building lqs ..."
-cargo build -q || fail "build"
+echo "lqs-fastgate: building eagle (+ sibling lqs) ..."
+cargo build -q -p eagle || fail "build"
 
-echo "lqs-fastgate: testing lqs ..."
-cargo test -q || fail "test"
+echo "lqs-fastgate: testing eagle ..."
+cargo test -q -p eagle || fail "test"
 
 elapsed=$(( $(date +%s) - start ))
 echo ""
