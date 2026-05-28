@@ -38,9 +38,11 @@
 //! - [`report`]  — JSON / badge reporting (fill phase).
 
 pub mod adapter;
+pub mod adapters_lamquant;
 pub mod bands;
 pub mod edf;
 pub mod harness;
 pub mod levels;
 pub mod metrics;
 pub mod report;
+pub mod suites;
