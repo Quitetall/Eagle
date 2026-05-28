@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OUT = REPO_ROOT / "outputs" / "paper"
+# In the unpacked supplementary zip the JSON evidence sits at
+# `<unpacked>/evidence/`; in the source repo it lives at
+# `outputs/paper/`. Probe the supplementary layout first so a
+# reviewer can run this script from either location without
+# editing it.
+OUT = REPO_ROOT / "evidence"
+if not OUT.exists():
+    OUT = REPO_ROOT / "outputs" / "paper"
 
 
 def load(p: Path) -> Any:
