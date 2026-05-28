@@ -1,6 +1,9 @@
 """Unit tests for ai_models/validation/downstream_concordance.py — Phase 3."""
 from __future__ import annotations
 
+import pytest  # decomp(eagle): downstream_concordance.py lives in sibling LamQuant-Neural
+pytest.importorskip("ai_models", reason="Cross-repo: needs sibling LamQuant-Neural (ai_models/validation/downstream_concordance.py)")
+
 import importlib.util
 import sys
 import types

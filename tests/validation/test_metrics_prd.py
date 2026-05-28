@@ -6,6 +6,9 @@ metric. These tests pin down the math + the LQS ship/no-ship gate.
 """
 from __future__ import annotations
 
+import pytest  # decomp(eagle): skip when sibling LamQuant-Neural / -Lossless not installed
+pytest.importorskip("metrics", reason="Cross-repo test; needs sibling LamQuant-Neural or -Lossless wheel installed")
+
 import sys
 from pathlib import Path
 

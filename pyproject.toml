@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eagle"
+version = "0.1.0"
+description = "Eagle — LamQuant validation + benchmarking suite (reproduces IEEE TBioCAS 2026 paper numbers)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Brian Lam", email = "briankhanglam@gmail.com" }]
+keywords = ["eeg", "benchmark", "validation", "reproducibility", "compression"]
+dependencies = [
+    "numpy>=1.24",
+    "pyedflib>=0.1.30",
+    "mne>=1.6",
+    # Codec under test: install sibling LamQuant-Lossless wheel first
+    #   pip install -e ../LamQuant-Lossless/reference_implementations/python_codec
+    "lamquant-codec",
+]
+
+[project.optional-dependencies]
+neural = [
+    # Some validation tests cross-check neural-codec inference.
+    # Install sibling LamQuant-Neural for the full suite.
+    "lamquant-neural",
+]
+dev = ["pytest>=8", "ruff"]
+
+[tool.setuptools]
+# Eagle ships scripts (tools/*.py), not an importable package tree.
+py-modules = []
+
+[tool.pytest.ini_options]
+markers = [
+    "l2: property-based / cross-impl validation tier",
+    "data: requires a real EEG corpus mounted locally",
+    "slow: long-running bench",
+]

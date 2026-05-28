@@ -14,6 +14,9 @@ Running ERDR end-to-end is a manual integration test — see the class-level
 `run_once` helper at the bottom for a smoke test you can invoke by hand.
 """
 
+import pytest  # decomp(eagle): skip when sibling LamQuant-Neural / -Lossless not installed
+pytest.importorskip("ai_models", reason="Cross-repo test; needs sibling LamQuant-Neural or -Lossless wheel installed")
+
 import os
 import sys
 from pathlib import Path

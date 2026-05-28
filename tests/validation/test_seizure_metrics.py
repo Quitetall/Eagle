@@ -11,6 +11,9 @@ Validates:
 Adapted metrics from NEDC EEG Evaluation Toolkit v6.0.0
 """
 
+import pytest  # decomp(eagle): skip when sibling LamQuant-Neural / -Lossless not installed
+pytest.importorskip("seizure_metrics", reason="Cross-repo test; needs sibling LamQuant-Neural or -Lossless wheel installed")
+
 import pytest
 import numpy as np
 import math

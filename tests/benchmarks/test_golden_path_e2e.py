@@ -18,6 +18,10 @@ Pass criteria:
   - PRD ≤ 40%
   - Compression ratio ≥ 5.0x
 """
+import pytest  # decomp(eagle): skip when sibling LamQuant-Neural / -Lossless not installed
+pytest.importorskip("lamquant_codec", reason="Cross-repo test; needs sibling LamQuant-Neural or -Lossless wheel installed")
+pytest.importorskip("precompute_l3_fast", reason="Cross-repo test; needs sibling LamQuant-Neural L3 precompute module")
+
 import os
 import sys
 import numpy as np

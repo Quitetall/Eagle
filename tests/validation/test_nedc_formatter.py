@@ -1,6 +1,9 @@
 """Unit tests for ai_models/validation/nedc_formatter.py — Phase 2."""
 from __future__ import annotations
 
+import pytest  # decomp(eagle): skip when sibling LamQuant-Neural / -Lossless not installed
+pytest.importorskip("ai_models", reason="Cross-repo test; needs sibling LamQuant-Neural or -Lossless wheel installed")
+
 from pathlib import Path
 
 import numpy as np

@@ -30,7 +30,12 @@ def _repo_root() -> Path:
 def test_format_consistency():
     """The cross-language constant audit must pass."""
     script = _repo_root() / "scripts" / "audit_format_consistency.py"
-    assert script.exists(), f"audit script missing: {script}"
+    # decomp(eagle): audit script is monorepo tooling (scripts/ split
+    # per-product during the 8-repo decomposition). Skip cleanly when
+    # running Eagle standalone without it present.
+    if not script.exists():
+        import pytest
+        pytest.skip(f"audit script not in this repo (monorepo-only tooling): {script}")
     result = subprocess.run(
         [sys.executable, str(script)],
         capture_output=True,
