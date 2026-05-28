@@ -9,9 +9,9 @@
 #   cd tools/hazard3_bench && cargo build --target riscv32imac-unknown-none-elf
 #   cd tools/bench/bench_rs && cargo build
 #
-# Both have a path = "../../../LamQuant-Lossless/lamquant-firmware" git/path
-# dep on the Lossless codec repo — see eagle/SETUP.md (to be added in
-# Phase 4 configure) for sibling-clone instructions.
+# Both pull lamquant-firmware from the Lossless codec repo over a pinned
+# git-rev (no sibling layout required) — see the root README "Dependencies"
+# section for the standalone clone + build steps.
 #
 # Python-side tools (tools/*.py + tools/*.sh) work standalone — they
 # install the lamquant-codec wheel from LamQuant-Lossless via pip and

@@ -21,34 +21,30 @@ LamQuant validation + benchmarking suite. Reproduces every numerical claim in th
 
 ## Dependencies
 
-Eagle depends on **[LamQuant-Lossless](https://github.com/Quitetall/LamQuant-Lossless)** (the codec under test). Two install paths:
-
-### Option A — Sibling-clone (recommended for dev)
+Eagle depends on **[LamQuant-Lossless](https://github.com/Quitetall/LamQuant-Lossless)** (the codec under test). It is a **standalone** clone — no sibling layout required. The Rust bench crates pull `lamquant-firmware` directly over a pinned git-rev, so Eagle resolves on its own.
 
 ```bash
-mkdir lamquant && cd lamquant
-git clone git@github.com:Quitetall/LamQuant-Lossless.git
 git clone git@github.com:Quitetall/Eagle.git
+cd Eagle
 
-# Python tools
-cd LamQuant-Lossless/reference_implementations/python_codec && pip install -e .
-cd ../../../Eagle && pip install -r requirements.txt  # (TODO Phase 4.1: ship requirements.txt)
+# Python tools — install the codec wheel from LamQuant-Lossless
+pip install "lamquant-codec @ git+https://github.com/Quitetall/LamQuant-Lossless.git#subdirectory=reference_implementations/python_codec"
+pip install -e .
 
-# Rust hazard3_bench (assumes sibling layout)
-cd Eagle/tools/hazard3_bench
-cargo build --target riscv32imac-unknown-none-elf
+# Rust hazard3_bench (riscv32 firmware target)
+cd tools/hazard3_bench && cargo build --target riscv32imac-unknown-none-elf
+
+# Rust host benches
+cd ../bench/bench_rs && cargo build
 ```
 
-`tools/hazard3_bench/Cargo.toml` references `lamquant-firmware` via relative path `../../../LamQuant-Lossless/lamquant-firmware` — sibling layout is the contract.
+Both `tools/hazard3_bench/Cargo.toml` and `tools/bench/bench_rs/Cargo.toml` reference `lamquant-firmware` via a pinned git-rev:
 
-### Option B — Git dep (when LamQuant-Lossless goes public)
-
-`tools/hazard3_bench/Cargo.toml` will switch to:
 ```toml
-lamquant-firmware = { git = "https://github.com/Quitetall/LamQuant-Lossless.git", branch = "main" }
+lamquant-firmware = { git = "https://github.com/Quitetall/LamQuant-Lossless.git", rev = "abcae4794c38b3d3e75d3c214063cf0307e3daba", default-features = false }
 ```
 
-This switch happens when LamQuant-Lossless flips public. Until then, Option A is the only path.
+Pulling a specific rev keeps the bench numbers reproducible against an exact codec commit. Bump the `rev` to re-pin against a newer LamQuant-Lossless release.
 
 ## How to reproduce paper numbers
 
