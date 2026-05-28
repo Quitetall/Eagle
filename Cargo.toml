@@ -18,4 +18,5 @@
 # read evidence JSON from a local `evidence/` directory (populated by
 # running the benches against a real EEG corpus).
 [workspace]
-members = []
+resolver = "2"
+members = ["lqs"]

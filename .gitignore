@@ -129,3 +129,6 @@ graphify-out/
 # bench harness in tools/hazard3_bench). Each subdir is pulled by
 # the runbook in tools/bench_rp2350_silicon.md.
 external/
+
+# Rust build
+target/
