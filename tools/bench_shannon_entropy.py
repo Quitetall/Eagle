@@ -50,6 +50,9 @@ import json
 import math
 import random
 import sys
+
+if sys.version_info < (3, 10):
+    sys.exit(f"bench_shannon_entropy.py requires Python 3.10+, detected {sys.version_info.major}.{sys.version_info.minor}")
 import time
 from collections import Counter
 from pathlib import Path

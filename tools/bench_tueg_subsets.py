@@ -36,6 +36,9 @@ import json
 import re
 import subprocess
 import sys
+
+if sys.version_info < (3, 10):
+    sys.exit(f"bench_tueg_subsets.py requires Python 3.10+, detected {sys.version_info.major}.{sys.version_info.minor}")
 import tempfile
 import time
 from collections import defaultdict

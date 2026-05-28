@@ -33,6 +33,9 @@ import json
 import random
 import subprocess
 import sys
+
+if sys.version_info < (3, 10):
+    sys.exit(f"bench_edf_reader_parity.py requires Python 3.10+, detected {sys.version_info.major}.{sys.version_info.minor}")
 import tempfile
 import time
 from pathlib import Path

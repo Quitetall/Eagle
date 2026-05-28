@@ -17,6 +17,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+if sys.version_info < (3, 10):
+    sys.exit("verify_paper_claims.py requires Python 3.10+ (PEP 604 "
+             "union syntax + Path | str typing). Detected: "
+             f"{sys.version_info.major}.{sys.version_info.minor}.")
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # In the unpacked supplementary zip the JSON evidence sits at
 # `<unpacked>/evidence/`; in the source repo it lives at
