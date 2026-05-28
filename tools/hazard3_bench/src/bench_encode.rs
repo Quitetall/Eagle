@@ -162,11 +162,11 @@ const CORE_CLOCK_MHZ: u64 = 150;
 
 #[riscv_rt::entry]
 fn main() -> ! {
-    // Hazard3 mcycle/minstret counters are inhibited by default
-    // (mcountinhibit = 0x5 at reset per the Hazard3 spec — bits 0 + 2
-    // gate mcycle + minstret respectively). Clear them to enable the
-    // counters before any timing read. M-mode is implicit under
-    // riscv-rt's _start.
+    // Hazard3 mcycle/minstret counters are inhibited at reset:
+    // mcountinhibit has bits 0+2 set (`CY` gates mcycle, `IR` gates
+    // minstret). `csrci mcountinhibit, 0x5` clears those bits and
+    // enables the counters. Must run before any timing read. M-mode
+    // is implicit under riscv-rt's _start.
     unsafe {
         asm!("csrci mcountinhibit, 0x5", options(nomem, nostack));
     }
