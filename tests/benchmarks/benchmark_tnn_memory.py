@@ -14,6 +14,11 @@ import torch
 import os
 import sys
 from pathlib import Path
+import pytest
+
+# Internal LamQuant-vendor neural introspection bench — gated out of the
+# external LQS suite. Run with `pytest -m internal`. See tests/internal/README.md.
+pytestmark = pytest.mark.internal
 
 def find_project_root(marker='.git'):
     path = Path(__file__).resolve()

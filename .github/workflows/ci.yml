@@ -29,6 +29,41 @@ jobs:
           # Coverage-dep tests gate via importorskip("lamquant_codec").
           pytest tests/ -v --tb=short
 
+  lqs-rust:
+    name: LQS Rust crate — build + test + smoke (fast gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # NOTE: lqs is a member of the repo-root Cargo workspace
+      # (Cargo.toml: members = ["lqs"]). The lockfile and build dir
+      # therefore live at the repo root — there is no lqs/Cargo.lock or
+      # lqs/target. We cache the workspace lock + root target/ so the key
+      # is real. No --all-features: the optional `zstd` feature pulls a
+      # system dependency we deliberately avoid (the keep-CI-fast point).
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: lqs-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            lqs-cargo-${{ runner.os }}-
+      - name: cargo build -p lqs
+        run: cargo build -p lqs --locked
+      - name: cargo test -p lqs
+        run: cargo test -p lqs --locked
+      - name: Smoke — eagle-lqs store (must exit 0)
+        run: cargo run -q -p lqs --bin eagle-lqs -- store
+      - name: cargo fmt -p lqs --check (advisory)
+        run: cargo fmt -p lqs -- --check
+        continue-on-error: true
+
   hazard3-bench-check:
     name: hazard3_bench cargo check (sibling-clone Lossless)
     runs-on: ubuntu-latest

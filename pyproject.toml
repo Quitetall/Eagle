@@ -37,4 +37,5 @@ markers = [
     "l2: property-based / cross-impl validation tier",
     "data: requires a real EEG corpus mounted locally",
     "slow: long-running bench",
+    "internal: LamQuant-vendor neural introspection bench (needs sibling LamQuant-Neural + Lossless wheel; not run by external CI — see tests/internal/README.md)",
 ]

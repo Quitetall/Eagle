@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Sample pre-push hook — runs the LQS Rust fast gate before every push.
+#
+# Enable for this clone:
+#   chmod +x .githooks/pre-push scripts/lqs-fastgate.sh
+#   git config core.hooksPath .githooks
+#
+# A nonzero exit from the fast gate aborts the push.
+
+set -euo pipefail
+
+# Resolve repo root from this hook's location so it runs from anywhere.
+HOOK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${HOOK_DIR}/.." && pwd)"
+
+exec "${REPO_ROOT}/scripts/lqs-fastgate.sh"

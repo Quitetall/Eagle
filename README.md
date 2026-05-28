@@ -67,9 +67,56 @@ python3 tools/verify_paper_claims.py
 # Expected: 60 PASS / 0 FAIL when evidence/ is fully populated
 ```
 
+## Two modes — external LQS vs internal LamQuant dev
+
+Eagle's test/bench suite runs in two clearly-namespaced modes:
+
+**External — the LamQuant Standard (LQS).** Default. Codec-agnostic: the Rust
+crate under `lqs/` plus the agnostic Python suites treat any conforming codec
+as an opaque compress/decompress box and verify only externally-observable
+quantities (compression ratio, bit-exact round-trip, latency, EDF parity).
+These run without the neural/torch stack and are what external CI executes:
+
+```bash
+pytest -m "not internal"     # external LQS Python suite
+cargo test -p lqs            # external LQS Rust crate (see lqs/ section below)
+```
+
+**Internal — LamQuant vendor dev.** LamQuant-specific introspection
+benchmarks that reach inside the neural codec internals (FSQ entropy/activity,
+latent utilization, Cayley rotation, residual-FSQ, subband leakage, TNN memory,
+XNOR/cpop MACs, C-vs-Python parity, ablation matrix). They are a dev dependency
+of LamQuant, **not** part of the external standard — they require the sibling
+**LamQuant-Neural** source tree plus the **LamQuant-Lossless** wheel, stay in
+Python, and are gated behind the `internal` pytest marker so they are skipped
+by default. See [`tests/internal/README.md`](tests/internal/README.md).
+
+```bash
+pip install -e '.[neural]'   # sibling neural + lossless stack
+pytest -m internal           # internal LamQuant dev suite
+```
+
+The introspection benches physically remain under `tests/benchmarks/`; they are
+tagged, not moved.
+
 ## Architecture
 
 Eagle is one repo in an 8-product Unix decomposition of LamQuant. It depends on **LamQuant-Lossless** (codec library) and optionally on **LamQuant-Neural** (when the neural codec ships) via Cargo feature flags.
+
+## LQS Rust crate — local fast gate
+
+`lqs/` is the vendor-neutral EEG codec benchmark standard, Rust-canonical for
+fast CI / pre-commit feedback. CI runs the `lqs-rust` job (build + test +
+`eagle-lqs store` smoke). To run the same gate locally before every push,
+enable the bundled hook:
+
+```bash
+chmod +x scripts/lqs-fastgate.sh .githooks/pre-push
+git config core.hooksPath .githooks   # enables .githooks/pre-push (LQS fast gate)
+```
+
+`scripts/lqs-fastgate.sh` (`cd lqs && cargo build -q && cargo test -q`) is the
+fast local mirror of the CI `lqs-rust` job; run it standalone anytime.
 
 ## License
 
