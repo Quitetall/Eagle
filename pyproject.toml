@@ -26,6 +26,13 @@ neural = [
     # Install sibling LamQuant-Neural for the full suite.
     "lamquant-neural",
 ]
+moabb = [
+    # Real motor-imagery datasets for the BCI downstream concordance bench
+    # (tools/bench_moabb_concordance.py). NOT a hard dep — the synthetic
+    # offline core needs only numpy+mne+sklearn+pyedflib+the lml binary.
+    "moabb>=1.0",
+    "pyriemann>=0.5",
+]
 dev = ["pytest>=8", "ruff"]
 
 [tool.setuptools]
@@ -38,4 +45,5 @@ markers = [
     "data: requires a real EEG corpus mounted locally",
     "slow: long-running bench",
     "internal: LamQuant-vendor neural introspection bench (needs sibling LamQuant-Neural + Lossless wheel; not run by external CI — see tests/internal/README.md)",
+    "bci: BCI motor-imagery downstream-task concordance (synthetic offline core; real datasets need the moabb extra + data marker)",
 ]

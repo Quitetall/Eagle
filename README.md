@@ -11,6 +11,7 @@ LamQuant validation + benchmarking suite. Reproduces every numerical claim in th
 | `tools/bench_per_file_cr.py` | Per-file CR distribution + boxplot data (Figure 3) |
 | `tools/bench_shannon_entropy.py` | Empirical entropy ceiling H_0, H_0(ΔX) for §II.D |
 | `tools/bench_edf_reader_parity.py` | MNE/pyedflib cross-validation (§IV.B four-layer protocol) |
+| `tools/bench_moabb_concordance.py` | BCI motor-imagery decoding concordance: does the codec preserve decode accuracy? compress→decompress→decode→compare (CSP+LDA); lossless → Δ = 0 |
 | `tools/bench_gzip_baseline.sh` | gzip/zstd baseline comparison on TUEG sample |
 | `tools/verify_paper_claims.py` | Single-shot script that walks every paper number → confirms against bundled `evidence/*.json` (60 PASS / 0 FAIL on a freshly-bundled supplementary) |
 | `tools/hazard3_bench/` | Rust no_std bench harness for RP2350 Hazard3 — produces `bench_encode.elf` for Verilator RTL simulation (paper §IV.D measured-cycle row) |
@@ -96,6 +97,35 @@ pytest -m internal           # internal LamQuant dev suite
 
 The introspection benches physically remain under `tests/benchmarks/`; they are
 tagged, not moved.
+
+**BCI downstream concordance (codec-agnostic, lives fully in Eagle).**
+`tools/bench_moabb_concordance.py` is the motor-imagery parallel to the NEURAL
+seizure-detection concordance: it asks *"does a codec preserve downstream BCI
+decoding accuracy?"* by running compress→decompress→decode→compare with a
+CSP+LDA pipeline and reporting the accuracy/kappa deltas. It is **codec-agnostic**
+— the codec is an opaque box reached through the `lml` binary (resolved from
+`$LML_BIN` → sibling `../LamQuant-Lossless/target/{release,debug}/lml` → `$PATH`),
+so it stays in the external LQS tier and does not depend on the neural stack
+(unlike the seizure module, which lives in sibling LamQuant-Neural and is
+`importorskip("ai_models")`-gated). The synthetic offline core needs only
+`numpy + mne + sklearn + pyedflib + the lml binary`; real motor-imagery datasets
+(BNCI2014_001, etc.) need the **moabb extra** (`pip install -e '.[moabb]'`) and
+are gated behind the `data` / `slow` markers. Be honest about what it proves: for
+a **lossless** codec Δ = 0 is *trivial-by-bit-exactness* (the round-trip is the
+identity at the sample level), so a `test_lossy_roundtrip_is_detected` guard
+proves the metric is not a self-fooling always-pass. The bench earns its keep
+when the neural / lossy codec ships and the deltas can actually move.
+
+```bash
+# offline core — codec-transparent on the real lml binary, no moabb:
+LML_BIN=/path/to/lml pytest -m bci tests/validation/test_moabb_concordance.py
+LML_BIN=/path/to/lml python3 tools/bench_moabb_concordance.py --source synthetic
+
+# real motor-imagery data:
+pip install -e '.[moabb]'
+python3 tools/bench_moabb_concordance.py --source moabb \
+    --dataset BNCI2014_001 --paradigm LeftRightImagery --subject 1
+```
 
 ## Architecture
 
