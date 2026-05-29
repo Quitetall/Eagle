@@ -67,15 +67,17 @@ python3 tools/verify_paper_claims.py
 
 Eagle's test/bench suite runs in two clearly-namespaced modes:
 
-**External — the LamQuant Standard (LQS).** Default. Codec-agnostic: the Rust
-crate under `lqs/` plus the agnostic Python suites treat any conforming codec
-as an opaque compress/decompress box and verify only externally-observable
-quantities (compression ratio, bit-exact round-trip, latency, EDF parity).
-These run without the neural/torch stack and are what external CI executes:
+**External — the LamQuant Standard (LQS).** Default. Codec-agnostic: the
+vendor-neutral **LQS** standard (its own repo, [Quitetall/LQS](https://github.com/Quitetall/LQS),
+consumed here by the `eagle` crate) plus the agnostic Python suites treat any
+conforming codec as an opaque compress/decompress box and verify only
+externally-observable quantities (compression ratio, bit-exact round-trip,
+latency, EDF parity). These run without the neural/torch stack and are what
+external CI executes:
 
 ```bash
 pytest -m "not internal"     # external LQS Python suite
-cargo test -p lqs            # external LQS Rust crate (see lqs/ section below)
+cargo test -p eagle          # the eagle crate (pulls the sibling LQS standard)
 ```
 
 **Internal — LamQuant vendor dev.** LamQuant-specific introspection
@@ -99,20 +101,29 @@ tagged, not moved.
 
 Eagle is one repo in an 8-product Unix decomposition of LamQuant. It depends on **LamQuant-Lossless** (codec library) and optionally on **LamQuant-Neural** (when the neural codec ships) via Cargo feature flags.
 
-## LQS Rust crate — local fast gate
+## Rust fast gate (eagle crate + sibling LQS)
 
-`lqs/` is the vendor-neutral EEG codec benchmark standard, Rust-canonical for
-fast CI / pre-commit feedback. CI runs the `lqs-rust` job (build + test +
-`eagle-lqs store` smoke). To run the same gate locally before every push,
+The vendor-neutral **LQS** standard is its own crate ([Quitetall/LQS](https://github.com/Quitetall/LQS),
+Rust-canonical for fast CI / pre-commit feedback). Eagle's `eagle` crate
+consumes it via a sibling-clone path dep — clone LQS next to this repo:
+
+```
+parent/
+  LQS/      (github.com/Quitetall/LQS)
+  Eagle/    (this repo)
+```
+
+CI runs the `eagle-rust` job (sibling-checkout LQS, then `cargo build -p eagle`
++ `cargo test -p eagle`). To run the same gate locally before every push,
 enable the bundled hook:
 
 ```bash
 chmod +x scripts/lqs-fastgate.sh .githooks/pre-push
-git config core.hooksPath .githooks   # enables .githooks/pre-push (LQS fast gate)
+git config core.hooksPath .githooks   # enables .githooks/pre-push (Rust fast gate)
 ```
 
-`scripts/lqs-fastgate.sh` (`cd lqs && cargo build -q && cargo test -q`) is the
-fast local mirror of the CI `lqs-rust` job; run it standalone anytime.
+`scripts/lqs-fastgate.sh` (`cargo build -q -p eagle && cargo test -q -p eagle`)
+is the fast local mirror of the CI `eagle-rust` job; run it standalone anytime.
 
 ## License
 

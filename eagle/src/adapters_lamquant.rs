@@ -17,8 +17,8 @@
 //! - [`LamQuantLossless::resolve`] returns `None` when no `lml` can be
 //!   found, so callers can skip the adapter cleanly.
 //! - The `#[cfg(test)]` round-trip below early-returns (printing a skip
-//!   note) when `lml` is absent, so `cargo test -p lqs` is green with or
-//!   without the sibling workspace checked out.
+//!   note) when `lml` is absent, so `cargo test -p eagle` is green with or
+//!   without the sibling LamQuant-Lossless workspace checked out.
 //!
 //! No Cargo feature gate is needed: the module is pure `std` (process
 //! spawn + temp files), so it always compiles; availability is a
@@ -506,7 +506,7 @@ mod tests {
     /// End-to-end round trip through the REAL `lml` binary.
     ///
     /// Gated on `lml` availability: if no binary resolves, the test prints
-    /// a skip note and passes, so `cargo test -p lqs` is green on a host
+    /// a skip note and passes, so `cargo test -p eagle` is green on a host
     /// without the sibling LamQuant-Lossless workspace.
     #[test]
     fn lml_roundtrip_grades_lqs_l_when_available() {
