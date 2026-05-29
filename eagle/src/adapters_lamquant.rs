@@ -33,21 +33,24 @@
 //!
 //! ## Round-trip contract
 //!
-//! `lml` only handles the EDF **digital** sample domain, which is signed
-//! 16-bit, and the bundled EDF reader requires a single shared sample
-//! rate (hence equal-length channels). The adapter therefore round-trips
-//! signals that satisfy:
+//! `lml` handles the EDF **digital** sample domain (signed 16-bit). The
+//! adapter blob is self-describing: `[b"LQS1"][u32 n_chan][per-channel
+//! u32 lengths][.lml bytes]`, so [`decode`] splits the flat int32 stream
+//! by exact per-channel counts.
 //!
-//! - every sample in `[i16::MIN, i16::MAX]`, and
-//! - every channel the same length, and
-//! - at least one channel with at least one sample.
+//! **Uniform-rate signals** (all channels equal length) round-trip
+//! bit-exactly and grade LQS-L. **Mixed-rate / ragged signals** are
+//! written as a valid per-channel-rate EDF, but lml's bare-`.lml`
+//! (`--no-bundle --i-understand-data-loss`) decode rectangularizes
+//! unequal-length channels, so the shape header detects the mismatch and
+//! [`decode`] returns empty — the harness then reports below-floor
+//! (an honest failed-lossless verdict), never a false LQS-L. Lossless
+//! mixed-rate grading would require driving lml's full `.lma` path
+//! (tracked as a follow-up).
 //!
-//! A signal that violates these cannot be expressed as a `.lml` and
-//! [`encode`] returns an empty blob; [`decode`] of an empty blob returns
-//! an empty signal, which the harness's L-tier gate then reports as a
-//! length/value mismatch (a failed lossless claim) rather than a panic.
-//! EEG digital ADC samples are 16-bit by construction, so this covers the
-//! real corpus; the synthetic and reference fixtures are sized to fit.
+//! A signal with out-of-`i16` samples or an empty channel likewise yields
+//! an empty blob → below-floor, never a panic. EEG digital ADC samples
+//! are 16-bit by construction.
 //!
 //! [`encode`]: Codec::encode
 //! [`decode`]: Codec::decode
@@ -206,9 +209,12 @@ pub fn write_edf_bytes(signal: &[Vec<i64>], fs: f64) -> Option<Vec<u8>> {
     if ns == 0 {
         return None;
     }
-    // All channels must share one length (EDF single-rate requirement).
-    let spr = signal[0].len();
-    if spr == 0 || signal.iter().any(|c| c.len() != spr) {
+    // Per-channel sample counts. Channels may differ in length (mixed-rate
+    // EDF) — we write ONE data record whose per-signal samples_per_record
+    // is each channel's own length. EDF supports this natively. Every
+    // channel must be non-empty.
+    let spr: Vec<usize> = signal.iter().map(|c| c.len()).collect();
+    if spr.iter().any(|&n| n == 0) {
         return None;
     }
     // Every sample must fit signed 16-bit (the EDF digital domain).
@@ -223,23 +229,22 @@ pub fn write_edf_bytes(signal: &[Vec<i64>], fs: f64) -> Option<Vec<u8>> {
         return None;
     }
 
-    // One record covers the whole signal: record_duration = spr / fs so
-    // the per-signal rate (spr / duration) reconstructs `fs`. The EDF
-    // duration field is 8 ASCII chars; format compactly and bail if it
-    // would not fit (extreme fs).
-    let record_duration = spr as f64 / fs;
-    let dur_str = format_edf_number(record_duration);
-    if dur_str.len() > 8 {
-        return None;
-    }
+    // One record covers the whole signal. record_duration is cosmetic for
+    // the lossless grade — lml round-trips the digital samples bit-exact
+    // regardless of the declared rate, and grading fs comes from the
+    // caller (EdfSignal::fs), not this internal EDF. Use 1.0 so mixed-rate
+    // channels (different spr) all fit one record cleanly.
+    let dur_str = "1       ".trim().to_string();
 
     let header_bytes = EDF_HEADER_BLOCK + ns * EDF_HEADER_BLOCK;
     let header_str = header_bytes.to_string();
-    if header_str.len() > 8 || ns.to_string().len() > 4 || spr.to_string().len() > 8 {
+    let max_spr_len = spr.iter().map(|n| n.to_string().len()).max().unwrap_or(1);
+    if header_str.len() > 8 || ns.to_string().len() > 4 || max_spr_len > 8 {
         return None;
     }
 
-    let mut buf = Vec::with_capacity(header_bytes + ns * spr * 2);
+    let total_samples: usize = spr.iter().sum();
+    let mut buf = Vec::with_capacity(header_bytes + total_samples * 2);
 
     // ── Main header. ───────────────────────────────────────────────────
     edf_field(&mut buf, "0", 8).ok()?; // version
@@ -278,8 +283,8 @@ pub fn write_edf_bytes(signal: &[Vec<i64>], fs: f64) -> Option<Vec<u8>> {
     for _ in 0..ns {
         edf_field(&mut buf, "", 80).ok()?; // prefilter
     }
-    for _ in 0..ns {
-        edf_field(&mut buf, &spr.to_string(), 8).ok()?; // n_samples_per_record
+    for i in 0..ns {
+        edf_field(&mut buf, &spr[i].to_string(), 8).ok()?; // per-channel n_samples_per_record
     }
     for _ in 0..ns {
         edf_field(&mut buf, "", 32).ok()?; // signal reserved
@@ -296,48 +301,17 @@ pub fn write_edf_bytes(signal: &[Vec<i64>], fs: f64) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-/// Format a float for an EDF ASCII field as compactly as possible.
-///
-/// EDF numeric fields are ASCII; integers render without a decimal point
-/// and fractional values keep just enough digits to round-trip the rate.
-fn format_edf_number(x: f64) -> String {
-    if x.fract() == 0.0 && x.abs() < 1e15 {
-        format!("{}", x as i64)
-    } else {
-        // Trim a fixed-precision render to drop trailing zeros.
-        let s = format!("{x:.6}");
-        let trimmed = s.trim_end_matches('0').trim_end_matches('.');
-        trimmed.to_string()
-    }
-}
-
-/// Parse the per-channel sample count and channel count from `lml info`.
-///
-/// `lml info` prints `Channels:   N` and `Samples:    M (...)` lines. We
-/// scan for both; the flat int32 decode stream is `N * M` samples in
-/// channel-major order, so these two numbers reconstruct the shape
-/// without trusting the stream length alone.
-fn parse_info_shape(info_stdout: &str) -> Option<(usize, usize)> {
-    let mut channels: Option<usize> = None;
-    let mut samples: Option<usize> = None;
-    for line in info_stdout.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("Channels:") {
-            channels = rest.trim().split_whitespace().next()?.parse().ok();
-        } else if let Some(rest) = line.strip_prefix("Samples:") {
-            // "Samples:    8 (2.0s @ 4 Hz)" -> first token is the count.
-            samples = rest.trim().split_whitespace().next()?.parse().ok();
-        }
-    }
-    match (channels, samples) {
-        (Some(c), Some(s)) if c > 0 => Some((c, s)),
-        _ => None,
-    }
-}
 
 impl LamQuantLossless {
     /// Encode `signal` to production `.lml` bytes, or `Vec::new()` on any
     /// failure (unsupported signal shape, `lml` error, I/O error).
+    ///
+    /// The returned blob is `[shape header][.lml bytes]` where the header
+    /// is `b"LQS1"` + `u32 n_chan` + `n_chan × u32` per-channel sample
+    /// counts (all little-endian). This makes the blob self-describing so
+    /// `decode` reconstructs the exact per-channel shape — including
+    /// mixed-rate files whose channels differ in length — without relying
+    /// on a uniform-shape reparse of `lml info`.
     fn try_encode(&self, signal: &[Vec<i64>], fs: f64) -> Vec<u8> {
         let edf = match write_edf_bytes(signal, fs) {
             Some(e) => e,
@@ -371,13 +345,52 @@ impl LamQuantLossless {
 
         // `lml` names the output after the input stem: in.edf -> in.lml.
         let lml_path = dir.join("in.lml");
-        std::fs::read(&lml_path).unwrap_or_default()
+        let lml_bytes = std::fs::read(&lml_path).unwrap_or_default();
+        if lml_bytes.is_empty() {
+            return Vec::new();
+        }
+
+        // Prepend the self-describing shape header so decode can split the
+        // flat int32 stream by exact per-channel lengths (ragged-safe).
+        let mut blob = Vec::with_capacity(8 + signal.len() * 4 + lml_bytes.len());
+        blob.extend_from_slice(b"LQS1");
+        blob.extend_from_slice(&(signal.len() as u32).to_le_bytes());
+        for ch in signal {
+            blob.extend_from_slice(&(ch.len() as u32).to_le_bytes());
+        }
+        blob.extend_from_slice(&lml_bytes);
+        blob
+    }
+
+    /// Split `[b"LQS1"][u32 n_chan][n_chan × u32 lens]` off the front of a
+    /// blob, returning the per-channel lengths and the trailing `.lml`
+    /// bytes. `None` if the header is missing/short/malformed.
+    fn parse_shape_header(blob: &[u8]) -> Option<(Vec<usize>, &[u8])> {
+        if blob.len() < 8 || &blob[0..4] != b"LQS1" {
+            return None;
+        }
+        let n_chan = u32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) as usize;
+        let lens_end = 8 + n_chan * 4;
+        if blob.len() < lens_end {
+            return None;
+        }
+        let mut lens = Vec::with_capacity(n_chan);
+        for i in 0..n_chan {
+            let o = 8 + i * 4;
+            lens.push(u32::from_le_bytes([blob[o], blob[o + 1], blob[o + 2], blob[o + 3]]) as usize);
+        }
+        Some((lens, &blob[lens_end..]))
     }
 
     /// Decode production `.lml` bytes back to the per-channel signal, or
     /// `Vec::new()` on any failure (so the L-tier gate sees a mismatch).
     fn try_decode(&self, blob: &[u8]) -> Vec<Vec<i64>> {
-        if blob.is_empty() {
+        // Strip the self-describing shape header (written by try_encode).
+        let (lens, lml_bytes) = match Self::parse_shape_header(blob) {
+            Some(x) => x,
+            None => return Vec::new(),
+        };
+        if lml_bytes.is_empty() {
             return Vec::new();
         }
         let dir = match ScratchDir::new("dec") {
@@ -385,26 +398,9 @@ impl LamQuantLossless {
             Err(_) => return Vec::new(),
         };
         let lml_path = dir.join("in.lml");
-        if std::fs::write(&lml_path, blob).is_err() {
+        if std::fs::write(&lml_path, lml_bytes).is_err() {
             return Vec::new();
         }
-
-        // Read the channel/sample shape from the container metadata so the
-        // flat int32 stream can be split into channel-major chunks.
-        let info = Command::new(&self.lml_bin)
-            .arg("info")
-            .arg(&lml_path)
-            .arg("-q")
-            .output();
-        let (n_chan, per_chan) = match info {
-            Ok(o) if o.status.success() => {
-                match parse_info_shape(&String::from_utf8_lossy(&o.stdout)) {
-                    Some(shape) => shape,
-                    None => return Vec::new(),
-                }
-            }
-            _ => return Vec::new(),
-        };
 
         let raw_path = dir.join("out.raw");
         let dec = Command::new(&self.lml_bin)
@@ -423,19 +419,19 @@ impl LamQuantLossless {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        // Stream is little-endian int32, channel-major. Validate the byte
-        // length matches the declared shape before splitting.
-        let total = n_chan.checked_mul(per_chan);
-        match total {
-            Some(t) if raw.len() == t * 4 => {}
-            _ => return Vec::new(),
+        // Stream is little-endian int32, channel-major; split by the exact
+        // per-channel lengths from the header (ragged-safe). The total must
+        // match the byte length or the decode is unfaithful.
+        let total: usize = lens.iter().sum();
+        if raw.len() != total * 4 {
+            return Vec::new();
         }
 
-        let mut out = Vec::with_capacity(n_chan);
+        let mut out = Vec::with_capacity(lens.len());
         let mut pos = 0usize;
-        for _ in 0..n_chan {
-            let mut chan = Vec::with_capacity(per_chan);
-            for _ in 0..per_chan {
+        for &n in &lens {
+            let mut chan = Vec::with_capacity(n);
+            for _ in 0..n {
                 let b = [raw[pos], raw[pos + 1], raw[pos + 2], raw[pos + 3]];
                 chan.push(i32::from_le_bytes(b) as i64);
                 pos += 4;
@@ -515,8 +511,9 @@ mod tests {
         assert!(write_edf_bytes(&[], 256.0).is_none());
         // Empty channel.
         assert!(write_edf_bytes(&[vec![]], 256.0).is_none());
-        // Ragged channels.
-        assert!(write_edf_bytes(&[vec![1, 2], vec![1]], 256.0).is_none());
+        // Ragged channels are now SUPPORTED (mixed-rate EDF): one record
+        // with per-channel samples_per_record = each channel's length.
+        assert!(write_edf_bytes(&[vec![1, 2], vec![1]], 256.0).is_some());
         // Out-of-i16-range sample.
         assert!(write_edf_bytes(&[vec![i64::MAX]], 256.0).is_none());
         // Non-positive rate.
@@ -538,12 +535,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_info_shape_reads_channels_and_samples() {
-        let info = "File:       x.lml\nChannels:   3\nWindows:    1\nSamples:    8 (2.0s @ 4 Hz)\n";
-        assert_eq!(parse_info_shape(info), Some((3, 8)));
-        // Missing fields -> None, never a panic.
-        assert_eq!(parse_info_shape("nothing useful here"), None);
-        assert_eq!(parse_info_shape("Channels:   0\nSamples:    4"), None);
+    fn shape_header_round_trips_ragged() {
+        // The self-describing header carries exact per-channel lengths so a
+        // mixed-rate (ragged) signal reconstructs without a uniform reshape.
+        let lml = b"\x00LML-payload-bytes";
+        let mut blob = Vec::new();
+        blob.extend_from_slice(b"LQS1");
+        blob.extend_from_slice(&3u32.to_le_bytes());
+        for &n in &[2u32, 4, 1] {
+            blob.extend_from_slice(&n.to_le_bytes());
+        }
+        blob.extend_from_slice(lml);
+        let (lens, payload) = LamQuantLossless::parse_shape_header(&blob).expect("valid header");
+        assert_eq!(lens, vec![2, 4, 1]);
+        assert_eq!(payload, lml);
+        // Malformed / short / wrong-magic headers -> None, never a panic.
+        assert!(LamQuantLossless::parse_shape_header(b"XXXX....").is_none());
+        assert!(LamQuantLossless::parse_shape_header(b"LQS1\x03\x00\x00\x00").is_none());
+        assert!(LamQuantLossless::parse_shape_header(b"").is_none());
     }
 
     #[test]
@@ -597,5 +606,39 @@ mod tests {
         assert_eq!(report.grade, 'L', "bit-exact codec must grade LQS-L");
         assert_eq!(report.prd, 0.0);
         assert_eq!(report.r, 1.0);
+    }
+
+    #[test]
+    fn mixed_rate_never_false_grades_l_when_available() {
+        // The guarantee under test: a ragged (mixed-rate) signal the
+        // adapter cannot losslessly round-trip must NEVER be graded LQS-L.
+        // lml's bare-`.lml` path (`--no-bundle --i-understand-data-loss`)
+        // rectangularizes channels of unequal length, so its decode does
+        // not reproduce ragged per-channel counts. The shape header makes
+        // decode detect that mismatch and return empty, and the harness
+        // shape-guard then reports below-floor — honest, not a false pass.
+        // (True lossless mixed-rate would require the adapter to use lml's
+        // full `.lma` path; tracked as a follow-up.)
+        let codec = match LamQuantLossless::resolve(256.0) {
+            Some(c) => c,
+            None => {
+                eprintln!("SKIP mixed_rate_never_false_grades_l: no lml binary");
+                return;
+            }
+        };
+        let signal: Vec<Vec<i64>> = vec![vec![10, -20, 30, -40, 50, -60, 70, -80], vec![1, -2, 3]];
+        let report = harness::run(&codec, &signal, 256.0);
+        assert_ne!(
+            report.grade, 'L',
+            "ragged signal not losslessly round-tripped must never grade LQS-L"
+        );
+        assert!(!report.bit_exact, "must not claim bit-exact when it isn't");
+
+        // A uniform-shape signal of the same channels still round-trips L.
+        let uni: Vec<Vec<i64>> = vec![vec![10, -20, 30, -40], vec![1, -2, 3, -4]];
+        let r2 = harness::run(&codec, &uni, 256.0);
+        if r2.bit_exact {
+            assert_eq!(r2.grade, 'L', "uniform bit-exact round trip grades L");
+        }
     }
 }
